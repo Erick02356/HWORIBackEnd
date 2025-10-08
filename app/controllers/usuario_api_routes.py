@@ -21,8 +21,8 @@ def obtener_usuario(id: int, db: Session = Depends(get_db)):
     return usuario
 
 @router.post("/usuarios")
-def crear_usuario_endpoint(nombres: str, apellidos: str, email: str, password: str, rol: str, db: Session = Depends(get_db)):
-    nuevo = Usuario(nombres=nombres, apellidos=apellidos, email=email, password=password, rol=rol)
+def crear_usuario_endpoint(usuario: str, password: str, db: Session = Depends(get_db)):
+    nuevo = Usuario(usuario=usuario, password=password)
     creado = crear_usuario(db, nuevo)
     return {"message": "Usuario creado exitosamente", "usuario": creado}
 

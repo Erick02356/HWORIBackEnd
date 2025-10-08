@@ -41,15 +41,6 @@ async def programas_academicos(request: Request,access_token: str = Cookie(None)
     if not sesion[0]:  return templates.TemplateResponse("dashboard/redirect-login.html", context)
     return templates.TemplateResponse("dashboard/administrador/programas_academicos.html", context)
 
-@router.get("/programas_movilidad", response_class=HTMLResponse)
-async def programas_academicos(request: Request,access_token: str = Cookie(None)):
-    context = {
-        "request": request,
-        "es_htmx": "HX-Request" in request.headers
-    }
-    sesion = TokenManager.validar_sesion_token(access_token,["admin"])
-    if not sesion[0]:  return templates.TemplateResponse("dashboard/redirect-login.html", context)
-    return templates.TemplateResponse("dashboard/administrador/programas_movilidad.html", context)
 
 #----------------------------------------------------------------------------------------------------------#
 
