@@ -2,7 +2,7 @@ from fastapi import Cookie, HTTPException, Request,APIRouter
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
-from app.services.JWT import TokenManager
+from app.utils.JWT import TokenManager
 
 router = APIRouter()
 templates = Jinja2Templates(directory="app/views")
