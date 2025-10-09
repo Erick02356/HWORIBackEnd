@@ -1,5 +1,6 @@
 from sqlalchemy.orm import Session
 from app.models.UsuarioModel import Usuario
+from app.utils.Bcrypt_password import generarPassword
 
 def get_usuarios(db: Session, skip: int = 0, limit: int = 25):
     return db.query(Usuario).offset(skip).limit(limit).all()
@@ -11,6 +12,9 @@ def get_usuario_por_email(db: Session, email: str):
     return db.query(Usuario).filter(Usuario.email == email).first()
 
 def crear_usuario(db: Session, usuario: Usuario):
+    # Hashear la contraseña antes de guardar
+    usuario.password = generarPassword(usuario.password)
+    
     db.add(usuario)
     db.commit()
     db.refresh(usuario)

@@ -1,13 +1,21 @@
-from sqlalchemy import Column, Integer, String, Date
+from sqlalchemy import Column, String, Date, ForeignKey
+from sqlalchemy.orm import relationship
 from app.config.database import Base
 
 class Convenio(Base):
-    __tablename__ = "convenio"  # nombre de la tabla
+    __tablename__ = "convenio"
+    __table_args__ = {"schema": "operations"}
 
-    codigo = Column(Integer, primary_key=True)
-    nombre = Column(String(200))
+    codigo = Column(String(50), primary_key=True, index=True)
+    nombre = Column(String(200), nullable=False)
     tipo = Column(String(100))
     fecha_inicio = Column(Date)
     fecha_inicializacion = Column(Date)
-    estado = Column(String(50))
-    codigo_institucion = Column(String(50))
+    estado = Column(String(20), default="Activo")
+    codigo_institucion = Column(String(50), ForeignKey("operations.institucion.codigo"))
+
+    # Relaciones
+    institucion = relationship("Institucion", backref="convenios")
+    tipos_movilidad = relationship(
+        "ConvenioTipoMovilidad", back_populates="convenio", cascade="all, delete-orphan"
+    )

@@ -3,10 +3,10 @@ from sqlalchemy.orm import sessionmaker, declarative_base
 import os
 from dotenv import load_dotenv
 
-# 🔹 Cargar variables desde el archivo .env
+# Cargar variables desde el archivo .env
 load_dotenv()
 
-# 🔹 Configura tu conexión (ajústala según tu entorno)
+# Configura tu conexión (ajústala según tu entorno)
 DB_USER = os.getenv("POSTGRESQL_USER")
 DB_PASSWORD = os.getenv("POSTGRESQL_PASSWORD")
 DB_HOST = os.getenv("POSTGRESQL_HOST")
@@ -20,6 +20,7 @@ SQLALCHEMY_DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_P
 engine = create_engine(SQLALCHEMY_DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
+from app.models import *
 
 def get_db():
     db = SessionLocal()
