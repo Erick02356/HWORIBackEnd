@@ -97,3 +97,30 @@ SELECT * FROM  datawarehouse."D_MOVILIDAD"
 SELECT * FROM  datawarehouse."D_LUGAR"
 
 --ALTER SEQUENCE D_PROGRAMA_llaveconvenios_seq RESTART WITH 1;
+
+-- Tabla de staggin esta tabla lo que hace es tener todos los datos normalizados y nos ayuda para la creación del hecho para
+-- relacionar sus datos
+CREATE TABLE IF NOT EXISTS parameters."stg_movilidades" (
+    Ano INTEGER,
+    Semestre INTEGER CHECK (Semestre IN (1, 2)),
+    Mes INTEGER CHECK (Mes BETWEEN 1 AND 12),
+    Dia INTEGER CHECK (Dia BETWEEN 1 AND 31),
+    PaisOrigen VARCHAR(100),
+    PaisDestino VARCHAR(100),
+    InstitucionOrigen VARCHAR(150),
+    InstitucionDestino VARCHAR(150),
+    SedeInstitucion VARCHAR(150),
+    NombrePrograma VARCHAR(150),
+    Facultad VARCHAR(150),
+    DependenciaAdministrativa VARCHAR(150),
+    Edad SMALLINT,
+    Genero VARCHAR(20),
+    EstadoCivil VARCHAR(30),
+    Rol VARCHAR(50),
+    SemestreCursante SMALLINT,
+    TipoMovilidad VARCHAR(50),
+    Modalidad VARCHAR(50),
+    Direccion VARCHAR(50),
+    DuracionDias INTEGER CHECK (DuracionDias > 0),
+    CodigoConvenio VARCHAR(50)   
+);

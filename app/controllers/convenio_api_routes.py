@@ -2,49 +2,80 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from app.config.database import get_db
 from app.services.convenio_service import ConvenioService
+from app.config.security import get_current_user
 
 router = APIRouter(prefix="/convenios", tags=["Convenios"])
-
-
-# Crear un nuevo convenio
+# ---------------------------- CREAR CONVENIO ---------------------------- #
 @router.post("/", status_code=status.HTTP_201_CREATED)
-def crear_convenio(convenio_data: dict, db: Session = Depends(get_db)):
+def crear_convenio(
+    convenio_data: dict,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user)  # 🔒 requiere JWT
+):
     try:
         convenio = ConvenioService.crear(db, convenio_data)
-        return {"message": "Convenio creado correctamente", "data": convenio}
+        return {
+            "message": f"Convenio creado correctamente por {current_user['id']}",
+            "data": convenio
+        }
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 
-# Listar convenios activos
+# ---------------------------- LISTAR CONVENIOS ---------------------------- #
 @router.get("/", status_code=status.HTTP_200_OK)
-def listar_convenios(skip: int = 0, limit: int = 25, db: Session = Depends(get_db)):
+def listar_convenios(
+    skip: int = 0,
+    limit: int = 25,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user)  # 🔒 requiere JWT
+):
     convenios = ConvenioService.listar(db, skip, limit)
-    return {"total": len(convenios), "data": convenios}
+    return {
+        "total": len(convenios),
+        "usuario": current_user["id"],  # puedes omitirlo si no lo necesitas
+        "data": convenios
+    }
 
 
-# Obtener convenio por código
+# ---------------------------- OBTENER POR CÓDIGO ---------------------------- #
 @router.get("/{codigo}", status_code=status.HTTP_200_OK)
-def obtener_convenio(codigo: str, db: Session = Depends(get_db)):
+def obtener_convenio(
+    codigo: str,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user)  # 🔒 requiere JWT
+):
     convenio = ConvenioService.obtener_por_codigo(db, codigo)
     if not convenio:
         raise HTTPException(status_code=404, detail="Convenio no encontrado")
     return convenio
 
 
-# Actualizar convenio
+# ---------------------------- ACTUALIZAR ---------------------------- #
 @router.put("/{codigo}", status_code=status.HTTP_200_OK)
-def actualizar_convenio(codigo: str, updates: dict, db: Session = Depends(get_db)):
+def actualizar_convenio(
+    codigo: str,
+    updates: dict,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user)  # 🔒 requiere JWT
+):
     convenio_actualizado = ConvenioService.actualizar(db, codigo, updates)
     if not convenio_actualizado:
         raise HTTPException(status_code=404, detail="Convenio no encontrado")
-    return {"message": "Convenio actualizado correctamente", "data": convenio_actualizado}
+    return {
+        "message": f"Convenio actualizado correctamente por {current_user['id']}",
+        "data": convenio_actualizado
+    }
 
 
-# Eliminación lógica (estado → 'Inactivo')
+# ---------------------------- ELIMINAR (LÓGICO) ---------------------------- #
 @router.delete("/{codigo}", status_code=status.HTTP_200_OK)
-def eliminar_convenio(codigo: str, db: Session = Depends(get_db)):
+def eliminar_convenio(
+    codigo: str,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user)  # 🔒 requiere JWT
+):
     exito = ConvenioService.eliminar(db, codigo)
     if not exito:
         raise HTTPException(status_code=404, detail="Convenio no encontrado o ya inactivo")
-    return {"message": "Convenio inactivado correctamente"}
+    return {"message": f"Convenio inactivado correctamente por {current_user['id']}"}
