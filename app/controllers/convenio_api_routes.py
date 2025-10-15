@@ -37,6 +37,37 @@ def listar_convenios(
         "data": convenios
     }
 
+# ---------------------------- OBTENER CONVENIOS PRO ---------------------------- #
+
+@router.get("/movilidades", status_code=status.HTTP_200_OK)
+def listar_convenios_con_movilidades(
+    skip: int = 0,
+    limit: int = 25,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user)
+):
+    convenios = ConvenioService.listar_con_movilidades(db, skip, limit)
+    
+    # Convertimos a formato JSON amigable
+    data = [
+        {
+            "codigo": c.codigo,
+            "nombre": c.nombre_convenio,
+            "tipo": c.tipo,
+            "fecha_inicio": c.fecha_inicio,
+            "fecha_finalizacion": c.fecha_finalizacion,
+            "estado": c.estado,
+            "nombre_institucion": c.nombre_institucion,
+            "Movilidades del convenio": c.movilidades_convenio or []
+        }
+        for c in convenios
+    ]
+
+    return {
+        "total": len(data),
+        "usuario": current_user["id"],
+        "data": data
+    }
 
 # ---------------------------- OBTENER POR CÓDIGO ---------------------------- #
 @router.get("/{codigo}", status_code=status.HTTP_200_OK)

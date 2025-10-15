@@ -14,6 +14,10 @@ class ConvenioService:
     def listar(db: Session, skip: int = 0, limit: int = 25):
         return convenio_repository.get_convenios(db, skip, limit)
 
+    # Obtener los convenios con su institucion
+    @staticmethod
+    def listar_con_movilidades(db, skip=0, limit=25):
+        return convenio_repository.get_convenios_with_movilidades(db, skip, limit)
     # Obtener convenio por código
     @staticmethod
     def obtener_por_codigo(db: Session, codigo: str):

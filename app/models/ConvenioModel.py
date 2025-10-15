@@ -10,7 +10,7 @@ class Convenio(Base):
     nombre = Column(String(200), nullable=False)
     tipo = Column(String(100))
     fecha_inicio = Column(Date)
-    fecha_inicializacion = Column(Date)
+    fecha_finalizacion = Column(Date)
     estado = Column(String(20), default="Activo")
     codigo_institucion = Column(String(50), ForeignKey("operations.institucion.codigo"))
 
