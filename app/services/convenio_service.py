@@ -21,13 +21,14 @@ class ConvenioService:
     # Obtener convenio por código
     @staticmethod
     def obtener_por_codigo(db: Session, codigo: str):
-        return convenio_repository.get_convenio(db, codigo)
-    
+        return convenio_repository.get_convenio_detalle(db, codigo)
+
     # Actualizar convenio
     @staticmethod
-    def actualizar(db: Session, codigo: str, updates: dict):
-        return convenio_repository.actualizar_convenio(db, codigo, updates)
-
+    def actualizar(db, codigo: str, body: dict):
+        tipos = body.pop("tipos_movilidad", None)  # puede venir o no
+        return convenio_repository.actualizar_convenio(db, codigo, body, tipos)
+    
     # Eliminar convenio (lógica)
     @staticmethod
     def eliminar(db: Session, codigo: str):

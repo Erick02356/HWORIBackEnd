@@ -62,7 +62,6 @@ def listar_convenios_con_movilidades(
         }
         for c in convenios
     ]
-
     return {
         "total": len(data),
         "usuario": current_user["id"],
@@ -74,29 +73,47 @@ def listar_convenios_con_movilidades(
 def obtener_convenio(
     codigo: str,
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user)  # 🔒 requiere JWT
+    current_user=Depends(get_current_user)
 ):
-    convenio = ConvenioService.obtener_por_codigo(db, codigo)
-    if not convenio:
+    c = ConvenioService.obtener_por_codigo(db, codigo)
+    if not c:
         raise HTTPException(status_code=404, detail="Convenio no encontrado")
-    return convenio
 
+    return {
+        "data": {
+            "codigo": c.codigo,
+            "nombre": c.nombre,
+            "tipo": c.tipo,
+            "fecha_inicio": c.fecha_inicio,
+            "fecha_finalizacion": c.fecha_finalizacion,
+            "estado": c.estado,
+            "codigo_institucion": c.codigo_institucion,
+            "tipos_movilidad": c.tipos_movilidad or [],
+        }
+    }
 
 # ---------------------------- ACTUALIZAR ---------------------------- #
 @router.put("/{codigo}", status_code=status.HTTP_200_OK)
 def actualizar_convenio(
     codigo: str,
-    updates: dict,
+    body: dict,
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user)  # 🔒 requiere JWT
+    current_user=Depends(get_current_user)
 ):
-    convenio_actualizado = ConvenioService.actualizar(db, codigo, updates)
-    if not convenio_actualizado:
-        raise HTTPException(status_code=404, detail="Convenio no encontrado")
-    return {
-        "message": f"Convenio actualizado correctamente por {current_user['id']}",
-        "data": convenio_actualizado
-    }
+    try:
+        convenio = ConvenioService.actualizar(db, codigo, body)
+        if not convenio:
+            raise HTTPException(status_code=404, detail="Convenio no encontrado")
+        return {
+            "message": f"Convenio actualizado por {current_user['id']}",
+            "data": convenio
+        }
+    except ValueError as ve:
+        # errores de validación legibles para el front (FK inexistente, tipos inválidos, etc.)
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        # opcional: loggear e
+        raise HTTPException(status_code=500, detail="Error inesperado al actualizar convenio")
 
 
 # ---------------------------- ELIMINAR (LÓGICO) ---------------------------- #
