@@ -3,6 +3,25 @@
 -- =========================
 -- 1 MVs: Movilidades por tiempo
 -- =========================
+
+DROP MATERIALIZED VIEW IF EXISTS datawarehouse.mv_movilidades_por_tiempo;
+
+CREATE MATERIALIZED VIEW datawarehouse.mv_movilidades_por_tiempo AS 
+SELECT 
+  t.año, 
+  t.semestre, 
+  COUNT(*)::bigint AS total_movilidades 
+FROM datawarehouse."H_MovilidadesRealizadas" h 
+JOIN datawarehouse."D_TIEMPO" t ON h.llavetiempo = t.llavetiempo 
+GROUP BY t.año, t.semestre; 
+
+CREATE UNIQUE INDEX IF NOT EXISTS ix_mv_movilidades_por_tiempo 
+ON datawarehouse.mv_movilidades_por_tiempo (año, semestre);
+
+
+-- =========================
+-- 2 MVs: Movilidades por pais
+-- =========================
 DROP MATERIALIZED VIEW IF EXISTS datawarehouse.mv_movilidades_por_pais;
 
 CREATE MATERIALIZED VIEW datawarehouse.mv_movilidades_por_pais AS
@@ -19,7 +38,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS ix_mv_movilidades_por_pais
 
 
 -- =========================
--- 2 MVs: Movilidades por programa
+-- 3 MVs: Movilidades por programa
 -- =========================
 DROP MATERIALIZED VIEW IF EXISTS datawarehouse.mv_movilidades_por_programa;
 
@@ -37,7 +56,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS ix_mv_movilidades_por_programa
 
 
 -- =========================
--- 3 MVs: Movilidades por convenio
+-- 4 MVs: Movilidades por convenio
 -- =========================
 DROP MATERIALIZED VIEW IF EXISTS datawarehouse.mv_movilidades_por_convenio;
 
@@ -56,7 +75,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS ix_mv_movilidades_por_convenio
 
 
 -- =========================
--- 4 MVs: Movilidades por institución
+-- 5 MVs: Movilidades por institución
 -- =========================
 DROP MATERIALIZED VIEW IF EXISTS datawarehouse.mv_movilidades_por_institucion;
 
@@ -74,7 +93,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS ix_mv_movilidades_por_institucion
 
 
 -- =========================
--- 5 MVs: Movilidades por género
+-- 6 MVs: Movilidades por género
 -- =========================
 DROP MATERIALIZED VIEW IF EXISTS datawarehouse.mv_movilidades_por_genero;
 
@@ -91,7 +110,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS ix_mv_movilidades_por_genero
 
 
 -- =========================
--- 6 MVs: Movilidades por direccion (Entrante/Saliente)
+-- 7 MVs: Movilidades por direccion (Entrante/Saliente)
 -- =========================
 DROP MATERIALIZED VIEW IF EXISTS datawarehouse.mv_movilidades_por_direccion;
 
@@ -108,7 +127,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS ix_mv_movilidades_por_direccion
 
 
 -- =========================
--- 7 MVs: Movilidades por tipo
+-- 8 MVs: Movilidades por tipo
 -- =========================
 DROP MATERIALIZED VIEW IF EXISTS datawarehouse.mv_movilidades_por_tipo;
 
@@ -125,7 +144,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS ix_mv_movilidades_por_tipo
 
 
 -- =========================
--- 8 MVs: Movilidades por modalidad
+-- 9 MVs: Movilidades por modalidad
 -- =========================
 DROP MATERIALIZED VIEW IF EXISTS datawarehouse.mv_movilidades_por_modalidad;
 
