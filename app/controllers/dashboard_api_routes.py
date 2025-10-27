@@ -78,10 +78,8 @@ def listar_por_convenio(db: Session = Depends(get_db), current_user=Depends(get_
     try:
         rows = DashboardService.listar_por_convenio(db)
         data = [
-            {"tipo": r.tipo if hasattr(r,'tipo') else r[0],
-             "vigencia": r.vigencia if hasattr(r,'vigencia') else r[1],
-             "estado": r.estado if hasattr(r,'estado') else r[2],
-             "total_movilidades": r.total_movilidades if hasattr(r,'total_movilidades') else r[3]}
+            {"codigo": r.codigo if hasattr(r,'codigo') else r[0],
+             "total_movilidades": r.total_movilidades if hasattr(r,'total_movilidades') else r[1]}
             for r in rows
         ]
         return {"total": len(data), "usuario": current_user["id"], "data": data}
@@ -223,9 +221,19 @@ def tipo_top(db: Session = Depends(get_db), current_user=Depends(get_current_use
 def convenio_top(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     try:
         r = DashboardService.convenio_top(db)
-        if not r: return {"total": 0, "usuario": current_user["id"], "data": []}
+        if not r:
+            return {"total": 0, "usuario": current_user["id"], "data": []}
+
         row = r[0]
-        return {"total": 1, "usuario": current_user["id"], "data": {"tipo": row[0], "vigencia": row[1], "estado": row[2], "total_movilidades": row[3]}}
+
+        return {
+            "total": 1,
+            "usuario": current_user["id"],
+            "data": {
+                "codigo": row.codigo if hasattr(row, 'codigo') else row[0],
+                "total_movilidades": row.total_movilidades if hasattr(row, 'total_movilidades') else row[1]
+            }
+        }
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 

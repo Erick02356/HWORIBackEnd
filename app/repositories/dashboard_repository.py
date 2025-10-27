@@ -33,7 +33,7 @@ class DashboardRepository:
     @staticmethod
     def listar_por_convenio(db: Session):
         sql = text("""
-            SELECT tipo, vigencia, estado, total_movilidades
+            SELECT codigoconvenio, total_movilidades
             FROM datawarehouse.mv_movilidades_por_convenio
             ORDER BY total_movilidades DESC
         """)
@@ -139,7 +139,7 @@ class DashboardRepository:
     @staticmethod
     def convenio_top(db: Session):
         sql = text("""
-            SELECT tipo, vigencia, estado, total_movilidades
+            SELECT codigoconvenio, total_movilidades
             FROM datawarehouse.mv_movilidades_por_convenio
             ORDER BY total_movilidades DESC
             LIMIT 1
