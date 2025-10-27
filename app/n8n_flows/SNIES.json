@@ -1,0 +1,2758 @@
+{
+  "name": "SNIES",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "ingesta-excel",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -192,
+        -64
+      ],
+      "id": "2a31b7b9-a316-4439-88b9-386bc132271e",
+      "name": "Webhook Ingesta-Excel",
+      "webhookId": "06f33ede-3032-436e-81f4-6617ce652f9e"
+    },
+    {
+      "parameters": {
+        "operation": "xlsx",
+        "binaryPropertyName": "file",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [
+        48,
+        -64
+      ],
+      "id": "b019db69-d93a-4083-859d-c4ff40c7aa5c",
+      "name": "Extract from File"
+    },
+    {
+      "parameters": {
+        "jsCode": "// --- Function node: convertir 'Fecha Inicio' y 'Fecha Finalización' --- //\n\nfunction excelSerialToDate(serial, use1904 = false) {\n  const n = Number(serial);\n  if (!isFinite(n) || n < 1) return null;\n\n  if (use1904) {\n    const epoch = Date.UTC(1904, 0, 1); // 1904-01-01\n    const ms = Math.round(n * 86400000);\n    return new Date(epoch + ms);\n  } else {\n    // Excel 1900 con el bug del 29-02-1900\n    let d = n;\n    if (d >= 60) d -= 1;\n    const epoch = Date.UTC(1899, 11, 31); // 1899-12-31\n    const ms = Math.round(d * 86400000);\n    return new Date(epoch + ms);\n  }\n}\n\nfunction looksLikeExcelDate(v) {\n  if (v === null || v === undefined) return false;\n  if (typeof v === 'number') return v > 30;\n  if (typeof v === 'string') {\n    const s = v.trim();\n    if (/^\\d+(\\.\\d+)?$/.test(s)) {\n      const n = Number(s);\n      return isFinite(n) && n > 30;\n    }\n  }\n  return false;\n}\n\nfunction formatISO(dt) {\n  if (!dt) return null;\n  const Y = dt.getUTCFullYear();\n  const M = String(dt.getUTCMonth() + 1).padStart(2, '0');\n  const D = String(dt.getUTCDate()).padStart(2, '0');\n  const hh = String(dt.getUTCHours()).padStart(2, '0');\n  const mm = String(dt.getUTCMinutes()).padStart(2, '0');\n  const ss = String(dt.getUTCSeconds()).padStart(2, '0');\n\n  // Solo fecha si es medianoche absoluta\n  if (hh === '00' && mm === '00' && ss === '00') return `${Y}-${M}-${D}`;\n  return `${Y}-${M}-${D}T${hh}:${mm}:${ss}Z`;\n}\n\nfunction convertExcelField(v) {\n  if (v === undefined || v === null) return v;\n  if (typeof v === 'string') {\n    const t = v.trim();\n    if (t === '' || t.toLowerCase() === 'null') return null;\n  }\n  if (!looksLikeExcelDate(v)) return v;\n\n  // Intentar 1900\n  let dt = excelSerialToDate(v, false);\n  let y = dt ? dt.getUTCFullYear() : null;\n\n  // Si parece raro, intentar 1904\n  if (!y || y < 1900 || y > 2100) {\n    const dt2 = excelSerialToDate(v, true);\n    const y2 = dt2 ? dt2.getUTCFullYear() : null;\n    if (y2 && y2 >= 1900 && y2 <= 2100) dt = dt2;\n  }\n\n  return formatISO(dt);\n}\n\n// --- Coincidencia flexible de nombres ---\nconst targets = ['Fecha Inicio', 'Fecha Finalización', 'Fecha Incio']; // incluye typo por si acaso\n\nfunction matchesKey(k, target) {\n  if (k === target) return true;\n  // [\"Fecha Inicio\"], ['Fecha Inicio'], [ 'Fecha Inicio' ]\n  const esc = target.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&');\n  const rx = new RegExp(\n    `^\\\\[\\\\s*[\"']${esc}[\"']\\\\s*\\\\]$`,\n    'i'\n  );\n  return rx.test(k);\n}\n\n// --- Procesar todos los items ---\nconst items = $input.all();\n\nfor (const item of items) {\n  const keys = Object.keys(item.json);\n  for (const k of keys) {\n    for (const t of targets) {\n      if (matchesKey(k, t)) {\n        try {\n          item.json[k] = convertExcelField(item.json[k]);\n        } catch (e) {\n          item.json[k] = null; // o deja el valor original si prefieres\n        }\n      }\n    }\n  }\n}\n\nreturn items;\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        384,
+        32
+      ],
+      "id": "c48dde10-0a27-4798-aca2-9448d22ac601",
+      "name": "FORMATEO FECHAS ISO"
+    },
+    {
+      "parameters": {
+        "jsCode": "// --- Function: Año, Semestre y Duración (días) ---\n\nconst DAY_MS = 86400000;\n// Pon true si quieres contar ambos extremos (inicio y fin)\nconst INCLUSIVE = false;\n\n// Acceso flexible por si aún hay columnas con corchetes\nfunction getField(obj, name) {\n  if (Object.prototype.hasOwnProperty.call(obj, name)) return obj[name];\n  const b1 = `['${name}']`;\n  const b2 = `[\"${name}\"]`;\n  if (Object.prototype.hasOwnProperty.call(obj, b1)) return obj[b1];\n  if (Object.prototype.hasOwnProperty.call(obj, b2)) return obj[b2];\n  return undefined;\n}\n\n// Parseo a Date en UTC (YYYY-MM-DD o YYYY-MM-DDTHH:mm:ssZ/espacio)\nfunction parseToUTC(s) {\n  if (s == null) return null;\n  if (typeof s !== 'string') s = String(s);\n  s = s.trim();\n\n  let m = s.match(/^(\\d{4})-(\\d{2})-(\\d{2})$/);\n  if (m) return new Date(Date.UTC(+m[1], +m[2]-1, +m[3]));\n\n  m = s.match(/^(\\d{4})-(\\d{2})-(\\d{2})[T ](\\d{2}):(\\d{2}):(\\d{2})(Z)?$/);\n  if (m) return new Date(Date.UTC(+m[1], +m[2]-1, +m[3], +m[4], +m[5], +m[6]));\n\n  const dt = new Date(s);\n  return isNaN(dt.getTime()) ? null : dt;\n}\n\nconst items = $input.all();\n\nfor (const item of items) {\n  // Asegurar que no queden estos campos\n  delete item.json.Mes;\n  delete item.json.Dia;\n\n  const startStr = getField(item.json, 'Fecha Inicio');\n  const endStr   = getField(item.json, 'Fecha Finalización');\n\n  const start = parseToUTC(startStr);\n  const end   = parseToUTC(endStr);\n\n  // Año y Semestre\n  if (start) {\n    item.json.Año      = start.getUTCFullYear();\n    item.json.Semestre = (start.getUTCMonth() + 1) <= 6 ? 1 : 2;\n  } else {\n    item.json.Año = null;\n    item.json.Semestre = null;\n  }\n\n  // Duración (días) truncada\n  if (start && end) {\n    const diffMs = end.getTime() - start.getTime();\n    if (isFinite(diffMs) && diffMs >= 0) {\n      let d = Math.floor(diffMs / DAY_MS);\n      if (INCLUSIVE) d += 1;\n      item.json['Duración (días)'] = d;\n    } else {\n      item.json['Duración (días)'] = null;\n    }\n  } else {\n    item.json['Duración (días)'] = null;\n  }\n}\n\nreturn items;\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        544,
+        -64
+      ],
+      "id": "2e89a980-53ce-4a1e-9e82-722cc10adc42",
+      "name": "SEPARACION FECHA"
+    },
+    {
+      "parameters": {
+        "jsCode": "// --- Function: dividir \"Nombre Postulante\" en 4 campos, vacíos '' si faltan ---\n\nconst CONNECTORS = new Set([\n  'de','del','de la','de las','de los','la','las','los','y','e',\n  'da','do','das','dos','di','du','van','von','bin','ibn','ap','af',\n  'al','el','san','santa','mc','mac','st','sta'\n]);\n\nfunction isConnectorToken(tok) {\n  const t = tok.toLowerCase();\n  return CONNECTORS.has(t) ||\n    ['de','del','la','las','los','y','e','van','von','da','do','di','du','al','el','san','santa']\n      .includes(t);\n}\n\nfunction getField(obj, name) {\n  if (Object.prototype.hasOwnProperty.call(obj, name)) return obj[name];\n  const v1 = `['${name}']`;\n  const v2 = `[\"${name}\"]`;\n  if (Object.prototype.hasOwnProperty.call(obj, v1)) return obj[v1];\n  if (Object.prototype.hasOwnProperty.call(obj, v2)) return obj[v2];\n  return undefined;\n}\n\nfunction tokenize(s) {\n  return String(s)\n    .replace(/[.,;]+/g, ' ')\n    .replace(/\\s+/g, ' ')\n    .trim()\n    .split(' ')\n    .filter(Boolean);\n}\n\nfunction joinTokens(arr, start, end) {\n  if (start > end) return '';\n  return arr.slice(start, end + 1).join(' ');\n}\n\nfunction splitName(fullName) {\n  const out = { PRIMER_NOMBRE: '', SEGUNDO_NOMBRE: '', PRIMER_APELLIDO: '', SEGUNDO_APELLIDO: '' };\n  if (fullName == null || String(fullName).trim() === '') return out;\n\n  const parts = tokenize(fullName);\n  const n = parts.length;\n  if (n === 0) return out;\n\n  if (n === 1) {\n    out.PRIMER_NOMBRE = parts[0];\n    return out;\n  }\n\n  if (n === 2) {\n    out.PRIMER_NOMBRE = parts[0];\n    out.PRIMER_APELLIDO = parts[1];\n    return out;\n  }\n\n  // n >= 3 → dos apellidos al final (maneja compuestos con conectores)\n  let saEnd = n - 1;\n  let saStart = saEnd;\n  while (saStart - 1 >= 0 && isConnectorToken(parts[saStart - 1])) saStart--;\n  out.SEGUNDO_APELLIDO = joinTokens(parts, saStart, saEnd);\n\n  let paEnd = saStart - 1;\n  let paStart = paEnd;\n  while (paStart - 1 >= 0 && isConnectorToken(parts[paStart - 1])) paStart--;\n  out.PRIMER_APELLIDO = paStart <= paEnd ? joinTokens(parts, paStart, paEnd) : '';\n\n  const given = parts.slice(0, paStart);\n\n  // Regla del usuario: con 3 palabras NO hay segundo nombre\n  out.PRIMER_NOMBRE = given[0] || '';\n  if (n >= 4) {\n    out.SEGUNDO_NOMBRE = given.length > 1 ? given.slice(1).join(' ') : '';\n  } else {\n    out.SEGUNDO_NOMBRE = '';\n  }\n\n  return out;\n}\n\nconst items = $input.all();\n\nfor (const item of items) {\n  const full = getField(item.json, 'Nombre Postulante');\n  const res = splitName(full);\n  item.json.PRIMER_NOMBRE    = res.PRIMER_NOMBRE;\n  item.json.SEGUNDO_NOMBRE   = res.SEGUNDO_NOMBRE;\n  item.json.PRIMER_APELLIDO  = res.PRIMER_APELLIDO;\n  item.json.SEGUNDO_APELLIDO = res.SEGUNDO_APELLIDO;\n}\n\nreturn items;\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        704,
+        80
+      ],
+      "id": "034ee9e3-bfb8-4060-a0f1-4726a6d3ab3a",
+      "name": "SEPARACION DE NOMBRE"
+    },
+    {
+      "parameters": {
+        "jsCode": "// --- Function: sobreescribir \"Tipo de Documento\" con código corto --- //\n\nfunction getDocKey(obj) {\n  const keys = [\n    \"['Tipo de Documento']\",\n    '[\"Tipo de Documento\"]',\n    'Tipo de Documento',\n    'tipo de documento'\n  ];\n  for (const k of keys) {\n    if (Object.prototype.hasOwnProperty.call(obj, k)) return k;\n  }\n  // si no existe, usaremos esta llave para escribir\n  return \"['Tipo de Documento']\";\n}\n\nfunction norm(s) {\n  return String(s)\n    .toLowerCase()\n    .normalize('NFD')                 // separa acentos\n    .replace(/[\\u0300-\\u036f]/g, '') // quita acentos\n    .replace(/\\s+/g, ' ')\n    .trim();\n}\n\nfunction mapDoc(value) {\n  if (value == null || String(value).trim() === '') return '';\n\n  const n = norm(value);\n\n  // equivalencias exactas normalizadas\n  const exact = {\n    'cedula de ciudadania': 'CC',\n    'cedula de ciudadania.': 'CC',\n    'cedula de ciudadania ': 'CC',\n    'tarjeta de identidad': 'TI',\n    'pasaporte': 'PS',\n    'cedula extranjera': 'CE',\n    'cedula de extranjeria': 'CE',\n    'documento de identidad extranjera': 'DIE',\n    'certificado cabildo': 'CAB',\n    'certificado de cabildo': 'CAB',\n  };\n  if (exact[n]) return exact[n];\n\n  // patrones robustos\n  if (/cedula.+ciudadan/.test(n)) return 'CC';\n  if (/tarjeta.+identidad/.test(n)) return 'TI';\n  if (/pasaport/.test(n)) return 'PS';\n  if (/cedula.+extranjer/.test(n) || /extranjeri[ai]/.test(n)) return 'CE';\n  if (/documento.+identidad.+extran/.test(n)) return 'DIE';\n  if (/certificad.+cabild/.test(n)) return 'CAB';\n\n  // si no reconocemos, devolvemos el original (no lo perdemos)\n  return value;\n}\n\nconst items = $input.all();\n\nfor (const item of items) {\n  const key = getDocKey(item.json);\n  const val = item.json[key];\n  item.json[key] = mapDoc(val);\n}\n\nreturn items;\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        848,
+        -48
+      ],
+      "id": "eead4a07-0d06-478c-8dde-f33941c68c51",
+      "name": "Nomenclatura Documentos"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        1776,
+        384
+      ],
+      "id": "8c860673-5da2-4f8a-ad74-22cfb6ac21c1",
+      "name": "Merge ENTRANTES"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT \"codigo_iso\" FROM operations.pais\nWHERE \"nombre\" ILIKE '%{{ $json['[\\'Pais Origen\\']'] }}%'\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1552,
+        368
+      ],
+      "id": "75bdce6e-b504-45c8-a393-0a68f29a0b03",
+      "name": "CODIGO  PAIS ENTRANTES",
+      "credentials": {
+        "postgres": {
+          "id": "ycnjkAko8nxYUOUj",
+          "name": "HRW-ORI"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT \"codigo_iso\" FROM operations.pais\nWHERE \"nombre\" ILIKE '%{{ $json['[\\'Pais Destino\\']'] }}%'\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1696,
+        128
+      ],
+      "id": "5ac8f431-95c8-44e9-8c8f-f3d6dd8bf4ed",
+      "name": "CODIGO  PAIS SALIENTES",
+      "credentials": {
+        "postgres": {
+          "id": "ycnjkAko8nxYUOUj",
+          "name": "HRW-ORI"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        1840,
+        -32
+      ],
+      "id": "65e21c4d-d030-4675-bd3d-55f1e6dd2819",
+      "name": "Merge SALIENTES"
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "[\"Año\"], Semestre, PRIMER_NOMBRE, SEGUNDO_NOMBRE, PRIMER_APELLIDO, SEGUNDO_APELLIDO, codigo_iso, [\"['Institución Destino']\"], codigo, [\"['Codigo Convenio']\"],[\"Duración (días)\"],['[\\'Tipo de Documento\\']'], ['[\\'Numero Documento\\']'], Rol",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        2048,
+        16
+      ],
+      "id": "44f86cfa-03b7-45db-960f-34a60a30824f",
+      "name": "Datos finales"
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "[\"Año\"], Semestre, PRIMER_NOMBRE, SEGUNDO_NOMBRE, PRIMER_APELLIDO, SEGUNDO_APELLIDO, codigo_iso,codigo, [\"['Codigo Convenio']\"],[\"Duración (días)\"],['[\\'Tipo de Documento\\']'], ['[\\'Numero Documento\\']'], Rol, ['[\\'Institución Origen\\']']",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        1936,
+        624
+      ],
+      "id": "30262fa2-d9db-4ecd-b5f3-e462da753729",
+      "name": "Datos finales1"
+    },
+    {
+      "parameters": {
+        "operation": "copy",
+        "fileId": {
+          "__rl": true,
+          "value": "1BDLwoPCV4-WWFfvWRcX3QCXogwWEvDx3ptNLIOnaApk",
+          "mode": "list",
+          "cachedResultName": "Movilidad de estudiantes  del exterior  hacia Colombia",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1BDLwoPCV4-WWFfvWRcX3QCXogwWEvDx3ptNLIOnaApk/edit?usp=drivesdk"
+        },
+        "name": "=Movilidad_estudiantes_hacia_colombia_\n{{$now.format('MM-DD')}}",
+        "sameFolder": false,
+        "driveId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "value": "=1_vcpLtvXsdE1IcfntDuudsWtRy4Sdjj4",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        2960,
+        784
+      ],
+      "id": "c656b5bd-7ac2-4538-b875-60e20bbc9edf",
+      "name": "ID_ES_EN",
+      "executeOnce": true,
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "bzNSbyldV5wLIJ8R",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "copy",
+        "fileId": {
+          "__rl": true,
+          "value": "1v7RLdKSILKKXbp8WC7AGr1smYe9N6fXAiz-7PVhs7Ds",
+          "mode": "list",
+          "cachedResultName": "Movilidad de personal administrativo del exterior hacia Colombia",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1v7RLdKSILKKXbp8WC7AGr1smYe9N6fXAiz-7PVhs7Ds/edit?usp=drivesdk"
+        },
+        "name": "= Movilidad_personal_administrativo_del_exterior_hacia_colombia_\n{{$now.format('MM-DD_HHmmss')}}",
+        "sameFolder": false,
+        "driveId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "value": "=123IGMPCzMPngHpGNPktDRcagX0SjcErw",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        2976,
+        1200
+      ],
+      "id": "f35aa469-15e2-4fe3-82ba-55bdd501a141",
+      "name": "ID_AD_EN",
+      "executeOnce": true,
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "bzNSbyldV5wLIJ8R",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "copy",
+        "fileId": {
+          "__rl": true,
+          "value": "1IHA3AALW0U_8FZsxWMT1jFvKVYmNL0h8oua3ifCeubM",
+          "mode": "list",
+          "cachedResultName": "Movilidad de docentes del exterior hacia Colombia",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1IHA3AALW0U_8FZsxWMT1jFvKVYmNL0h8oua3ifCeubM/edit?usp=drivesdk"
+        },
+        "name": "=Movilidad_docentes_hacia_colombia_\n{{$now.format('MM-DD_HHmmss')}}",
+        "sameFolder": false,
+        "driveId": {
+          "__rl": true,
+          "value": "=My Drive",
+          "mode": "id"
+        },
+        "folderId": {
+          "__rl": true,
+          "value": "=1XpRoJMZrA61JJTVtbnAmqxFeeLx0bvP5",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        3024,
+        960
+      ],
+      "id": "16ae6b12-a4c5-440d-93ea-ff6e016ee24b",
+      "name": "ID_DO_EN",
+      "executeOnce": true,
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "bzNSbyldV5wLIJ8R",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "copy",
+        "fileId": {
+          "__rl": true,
+          "value": "1eaUtkumWwfOQZwNFI3URbh4_grrb_lBnDqBKzgPDf_E",
+          "mode": "list",
+          "cachedResultName": "Movilidad de estudiante hacia el exterior",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1eaUtkumWwfOQZwNFI3URbh4_grrb_lBnDqBKzgPDf_E/edit?usp=drivesdk"
+        },
+        "name": "=Movilidad_estudiantes_hacia_exterior_\n{{$now.format('MM-DD_HHmmss')}}",
+        "sameFolder": false,
+        "driveId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "=1DUO5fqMYixuw56Qkz56aI3bitrOhjTCh"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        2976,
+        64
+      ],
+      "id": "7b13b5b7-2f8d-45e7-8452-e46f3b4ae558",
+      "name": "ID_ES_SA",
+      "executeOnce": true,
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "bzNSbyldV5wLIJ8R",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "copy",
+        "fileId": {
+          "__rl": true,
+          "value": "1TN_UfCBwPFm6cv1QI0b_Sm7_RbsoZSPg4q5w3XVLOjI",
+          "mode": "list",
+          "cachedResultName": "Movilidad de personal administrativo hacia el exterior",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1TN_UfCBwPFm6cv1QI0b_Sm7_RbsoZSPg4q5w3XVLOjI/edit?usp=drivesdk"
+        },
+        "name": "=Movilidad_personal_administrativo_hacia_exterior_{{$now.format('MM-DD')}}",
+        "sameFolder": false,
+        "driveId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "value": "=19eKF5C02g8aQ2JSUF6RyDqslENvY0L4m",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        2976,
+        512
+      ],
+      "id": "9e0f5c4c-841b-4401-801a-f73290cfffac",
+      "name": "ID_AD_SA",
+      "executeOnce": true,
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "bzNSbyldV5wLIJ8R",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "copy",
+        "fileId": {
+          "__rl": true,
+          "value": "1IyAZe93qinXgSGG6yzmQJZMMy2zYXblKsKc1pL9zEiU",
+          "mode": "list",
+          "cachedResultName": "Movilidad de docentes hacia el exterior",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1IyAZe93qinXgSGG6yzmQJZMMy2zYXblKsKc1pL9zEiU/edit?usp=drivesdk"
+        },
+        "name": "=Movilidad_docentes_hacia_exterior_\n{{$now.format('MM-DD_HHmmss')}}",
+        "sameFolder": false,
+        "driveId": {
+          "__rl": true,
+          "value": "=My Drive",
+          "mode": "id"
+        },
+        "folderId": {
+          "__rl": true,
+          "value": "=13dVqlVsoaIhwHk8g332dIuUezIOhjz2B",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        2992,
+        288
+      ],
+      "id": "d6fb85bb-3c22-442c-9c13-d03419fb51c3",
+      "name": "ID_DO_SA",
+      "executeOnce": true,
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "bzNSbyldV5wLIJ8R",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "inputDataFieldName": "file",
+        "driveId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "value": "1FZQqgw00NRufx8yUKekGj9TGpfj21kjX",
+          "mode": "list",
+          "cachedResultName": "CheckList Historial",
+          "cachedResultUrl": "https://drive.google.com/drive/folders/1FZQqgw00NRufx8yUKekGj9TGpfj21kjX"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        112,
+        -320
+      ],
+      "id": "5c9ded6c-58f0-413a-85df-69f46e47b918",
+      "name": "Carga checklist recibido",
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "bzNSbyldV5wLIJ8R",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "['Nombre Postulante'], Rol, ['Tipo de Documento'], ['Numero Documento'], ['Pais Origen'], ['Pais Destino'], ['Institución Origen'], ['Institución Destino'], ['Tipo Movilidad'], ['Fecha Inicio'], ['Fecha Finalización'], ['Entrante/Saliente'], ['Codigo Convenio']",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        224,
+        -80
+      ],
+      "id": "5bcb204a-79bd-44eb-9b35-88c2fcb8fa6e",
+      "name": "SEPARAR SOLO COLUMNAS A USAR"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json['[\\'Entrante/Saliente\\']'] }}",
+                    "rightValue": "Saliente",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "97ded323-99a4-4831-a30e-5417ff91ed36"
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "31033757-601e-4197-9fcb-b1b9a72f7f5a",
+                    "leftValue": "={{ $json['[\\'Entrante/Saliente\\']'] }}",
+                    "rightValue": "Entrante",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.3,
+      "position": [
+        1392,
+        160
+      ],
+      "id": "f9e73aa6-2592-4470-8670-406bbe0a2876",
+      "name": "Separación Salientes y Entrantes"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT \"codigo\", \"nombre\" FROM operations.\"tipo_movilidad\" \n  WHERE \"nombre\" ILIKE '%{{ $json['[\\'Tipo Movilidad\\']'] }}%' ",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1024,
+        224
+      ],
+      "id": "5adb92a0-1b39-4873-a823-d4a1bd8a702f",
+      "name": "Empalme codigos movilidad con nombre",
+      "credentials": {
+        "postgres": {
+          "id": "ycnjkAko8nxYUOUj",
+          "name": "HRW-ORI"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        1216,
+        144
+      ],
+      "id": "a01b7eff-7c53-4629-8ece-29e4d9b1e5f5",
+      "name": "Fusión codigos movilidades con datos de tabla"
+    },
+    {
+      "parameters": {
+        "jsCode": "// n8n → Function (no Function Item)\n\n// Renombres manuales opcionales (sobrescriben lo normalizado)\nconst manualMap = {\n  // Ejemplos: fuerza nombres exactos si los necesitas\n  // 'SEMESTRE': 'SEMEST',\n  // 'CODIGO_CONVENIO': 'CODIGO_CONVENIO',\n  // 'INSTITUCION_DESTINO': 'INSTITUCION_DESTINO',\n  // 'DURACION_DIAS': 'DURACION_DIAS',\n};\n\nfunction normalizeKey(key) {\n  let k = String(key)\n    // 1) quita comillas/corchetes/paréntesis raros\n    .replace(/[\\[\\]\\{\\}\"'`´]+/g, ' ')\n    // 2) elimina acentos/diacríticos (áéíóúüñ, etc.)\n    .normalize('NFD').replace(/[\\u0300-\\u036f]/g, '')\n    // 3) todo lo que no sea alfanum a \"_\"\n    .replace(/[^A-Za-z0-9]+/g, '_')\n    // 4) compacta y recorta \"_\"\n    .replace(/_{2,}/g, '_')\n    .replace(/^_+|_+$/g, '')\n    // 5) mayúsculas\n    .toUpperCase();\n\n  // Caso especial: ANIO → ANO (evita problemas con \"AÑO\")\n  if (k === 'ANIO') k = 'ANO';\n\n  // Aplica renombre manual si existe\n  return manualMap[k] || k;\n}\n\nreturn items.map((item) => {\n  const src = item.json || {};\n  const out = {};\n  const seen = new Set();\n\n  for (const [key, val] of Object.entries(src)) {\n    let nk = normalizeKey(key);\n\n    // Evita colisiones si dos claves distintas acaban iguales\n    let i = 2;\n    while (seen.has(nk)) {\n      nk = `${nk}_${i++}`;\n    }\n    seen.add(nk);\n\n    out[nk] = val;\n  }\n\n  return { json: out };\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2256,
+        16
+      ],
+      "id": "121c791f-6a90-4a82-832e-9a4fcd121dc4",
+      "name": "Formateo_nombre_celdas"
+    },
+    {
+      "parameters": {
+        "jsCode": "// n8n → Function (no Function Item)\n\n// Renombres manuales opcionales (sobrescriben lo normalizado)\nconst manualMap = {\n  // Ejemplos: fuerza nombres exactos si los necesitas\n  // 'SEMESTRE': 'SEMEST',\n  // 'CODIGO_CONVENIO': 'CODIGO_CONVENIO',\n  // 'INSTITUCION_DESTINO': 'INSTITUCION_DESTINO',\n  // 'DURACION_DIAS': 'DURACION_DIAS',\n};\n\nfunction normalizeKey(key) {\n  let k = String(key)\n    // 1) quita comillas/corchetes/paréntesis raros\n    .replace(/[\\[\\]\\{\\}\"'`´]+/g, ' ')\n    // 2) elimina acentos/diacríticos (áéíóúüñ, etc.)\n    .normalize('NFD').replace(/[\\u0300-\\u036f]/g, '')\n    // 3) todo lo que no sea alfanum a \"_\"\n    .replace(/[^A-Za-z0-9]+/g, '_')\n    // 4) compacta y recorta \"_\"\n    .replace(/_{2,}/g, '_')\n    .replace(/^_+|_+$/g, '')\n    // 5) mayúsculas\n    .toUpperCase();\n\n  // Caso especial: ANIO → ANO (evita problemas con \"AÑO\")\n  if (k === 'ANIO') k = 'ANO';\n\n  // Aplica renombre manual si existe\n  return manualMap[k] || k;\n}\n\nreturn items.map((item) => {\n  const src = item.json || {};\n  const out = {};\n  const seen = new Set();\n\n  for (const [key, val] of Object.entries(src)) {\n    let nk = normalizeKey(key);\n\n    // Evita colisiones si dos claves distintas acaban iguales\n    let i = 2;\n    while (seen.has(nk)) {\n      nk = `${nk}_${i++}`;\n    }\n    seen.add(nk);\n\n    out[nk] = val;\n  }\n\n  return { json: out };\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2160,
+        672
+      ],
+      "id": "53c74a2d-5a59-4dd2-bd02-e53d743033ee",
+      "name": "Formateo_nombre_celdas1"
+    },
+    {
+      "parameters": {
+        "mode": "chooseBranch"
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        3264,
+        0
+      ],
+      "id": "71dbf749-06ec-40a3-8b16-29f91daa4eb2",
+      "name": "Merge estudiantes salientes"
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{$node[\"ID_ES_SA\"].json.id}}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 1040168971,
+          "mode": "list",
+          "cachedResultName": "MOV_ESTUD_HACIA_EL_EXTERIOR",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1heVGLCCUHVfJfmuKgwPJbPWG1ASJi4shatrwCZnmaI4/edit#gid=1040168971"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "AÑO": "={{ $json.ANO }}",
+            "SEMESTRE": "={{ $json.SEMESTRE }}",
+            "PRIMER_NOMBRE": "={{ $json.PRIMER_NOMBRE }}",
+            "SEGUNDO_NOMBRE": "={{ $json.SEGUNDO_NOMBRE }}",
+            "PRIMER_APELLIDO": "={{ $json.PRIMER_APELLIDO }}",
+            "SEGUNDO_APELLIDO": "={{ $json.SEGUNDO_APELLIDO }}",
+            "ID_PAIS_EXTRANJERO": "={{ $json.CODIGO_ISO }}",
+            "INSTITUCION_EXTRANJERA": "={{ $json.INSTITUCION_DESTINO }}",
+            "ID_TIPO_MOV_EST_EXTERIOR": "={{ $json.CODIGO }}",
+            "CODIGO_CONVENIO": "={{ $json.CODIGO_CONVENIO }}",
+            "NUM_DIAS_MOVILIDAD": "={{ $json.DURACION_DIAS }}",
+            "MOVILIDAD_POR_CONVENIO": "S",
+            "ID_TIPO_DOCUMENTO": "={{ $json.TIPO_DE_DOCUMENTO }}",
+            "NUM_DOCUMENTO": "={{ $json.NUMERO_DOCUMENTO }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "AÑO",
+              "displayName": "AÑO",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "SEMESTRE",
+              "displayName": "SEMESTRE",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "ID_TIPO_DOCUMENTO",
+              "displayName": "ID_TIPO_DOCUMENTO",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "NUM_DOCUMENTO",
+              "displayName": "NUM_DOCUMENTO",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "PRIMER_NOMBRE",
+              "displayName": "PRIMER_NOMBRE",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "SEGUNDO_NOMBRE",
+              "displayName": "SEGUNDO_NOMBRE",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "PRIMER_APELLIDO",
+              "displayName": "PRIMER_APELLIDO",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "SEGUNDO_APELLIDO",
+              "displayName": "SEGUNDO_APELLIDO",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "ID_PAIS_EXTRANJERO",
+              "displayName": "ID_PAIS_EXTRANJERO",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "INSTITUCION_EXTRANJERA",
+              "displayName": "INSTITUCION_EXTRANJERA",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "ID_TIPO_MOV_EST_EXTERIOR",
+              "displayName": "ID_TIPO_MOV_EST_EXTERIOR",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "NUM_DIAS_MOVILIDAD",
+              "displayName": "NUM_DIAS_MOVILIDAD",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "MOVILIDAD_POR_CONVENIO",
+              "displayName": "MOVILIDAD_POR_CONVENIO",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "CODIGO_CONVENIO",
+              "displayName": "CODIGO_CONVENIO",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "ID_FUENTE_NACIONAL_INVESTIG",
+              "displayName": "ID_FUENTE_NACIONAL_INVESTIG",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "VALOR_FINANCIACION_NACIONAL",
+              "displayName": "VALOR_FINANCIACION_NACIONAL",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "ID_FUENTE_INTERNACIONAL",
+              "displayName": "ID_FUENTE_INTERNACIONAL",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "ID_PAIS_FINANCIADOR",
+              "displayName": "ID_PAIS_FINANCIADOR",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "VALOR_FINANCIACION_INTERNAC",
+              "displayName": "VALOR_FINANCIACION_INTERNAC",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        3488,
+        0
+      ],
+      "id": "41d50f05-61ea-4425-a4ef-6666ff525484",
+      "name": "Llenado SNIES Estudiantes salientes",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "UNMBokPLhTvFTs2t",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "chooseBranch"
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        3280,
+        224
+      ],
+      "id": "bf64258c-83fe-4f50-b30f-359c259da74c",
+      "name": "Merge Docentes Salientes"
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{$node[\"ID_DO_SA\"].json.id}}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 1692135317,
+          "mode": "list",
+          "cachedResultName": "MOV_DOCENTE_HACIA_EL_EXTERIOR",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1RDth4MNAXPxsCsH8AgvHiGXD9KUAQS2cgQnWv--tKJQ/edit#gid=1692135317"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "AÑO": "={{ $json.ANO }}",
+            "SEMESTRE": "={{ $json.SEMESTRE }}",
+            "ID_TIPO_DOCUMENTO": "={{ $json.TIPO_DE_DOCUMENTO }}",
+            "NUM_DOCUMENTO": "={{ $json.NUMERO_DOCUMENTO }}",
+            "PRIMER_NOMBRE": "={{ $json.PRIMER_NOMBRE }}",
+            "SEGUNDO_NOMBRE": "={{ $json.SEGUNDO_NOMBRE }}",
+            "PRIMER_APELLIDO": "={{ $json.PRIMER_APELLIDO }}",
+            "SEGUNDO_APELLIDO": "={{ $json.SEGUNDO_APELLIDO }}",
+            "ID_PAIS_EXTRANJERO": "={{ $json.CODIGO_ISO }}",
+            "INSTITUCION_EXTRANJERA": "={{ $json.INSTITUCION_DESTINO }}",
+            "ID_TIPO_MOV_DOC_EXTERIOR": "={{ $json.CODIGO }}",
+            "NUM_DIAS_MOVILIDAD": "={{ $json.DURACION_DIAS }}",
+            "MOVILIDAD_POR_CONVENIO": "S",
+            "CODIGO_CONVENIO": "={{ $json.CODIGO_CONVENIO }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "AÑO",
+              "displayName": "AÑO",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "SEMESTRE",
+              "displayName": "SEMESTRE",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "ID_TIPO_DOCUMENTO",
+              "displayName": "ID_TIPO_DOCUMENTO",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "NUM_DOCUMENTO",
+              "displayName": "NUM_DOCUMENTO",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "PRIMER_NOMBRE",
+              "displayName": "PRIMER_NOMBRE",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "SEGUNDO_NOMBRE",
+              "displayName": "SEGUNDO_NOMBRE",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "PRIMER_APELLIDO",
+              "displayName": "PRIMER_APELLIDO",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "SEGUNDO_APELLIDO",
+              "displayName": "SEGUNDO_APELLIDO",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "ID_PAIS_EXTRANJERO",
+              "displayName": "ID_PAIS_EXTRANJERO",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "INSTITUCION_EXTRANJERA",
+              "displayName": "INSTITUCION_EXTRANJERA",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "ID_TIPO_MOV_DOC_EXTERIOR",
+              "displayName": "ID_TIPO_MOV_DOC_EXTERIOR",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "NUM_DIAS_MOVILIDAD",
+              "displayName": "NUM_DIAS_MOVILIDAD",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "MOVILIDAD_POR_CONVENIO",
+              "displayName": "MOVILIDAD_POR_CONVENIO",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "CODIGO_CONVENIO",
+              "displayName": "CODIGO_CONVENIO",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "ID_FUENTE_NACIONAL_INVESTIG",
+              "displayName": "ID_FUENTE_NACIONAL_INVESTIG",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "VALOR_FINANCIACION_NACIONAL",
+              "displayName": "VALOR_FINANCIACION_NACIONAL",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "ID_FUENTE_INTERNACIONAL",
+              "displayName": "ID_FUENTE_INTERNACIONAL",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "ID_PAIS_FINANCIADOR",
+              "displayName": "ID_PAIS_FINANCIADOR",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "VALOR_FINANCIACION_INTERNAC",
+              "displayName": "VALOR_FINANCIACION_INTERNAC",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        3488,
+        224
+      ],
+      "id": "01d3c09d-902d-42f8-add0-54cbaeef216e",
+      "name": "Llenado SNIES Docentes Salientes",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "UNMBokPLhTvFTs2t",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c8181493-19a7-4d35-ab2e-70c52f50ea51",
+              "leftValue": "={{ $json.ROL }}",
+              "rightValue": "Estudiante",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2448,
+        -16
+      ],
+      "id": "0cb32eb7-bcaa-4cf6-a442-fda4abdda902",
+      "name": "Divison por ROL EST/DOC"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "5f354d3b-9e42-4128-bc79-8687ba5ddbe6",
+              "leftValue": "={{ $json.ROL }}",
+              "rightValue": "Docente",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2656,
+        272
+      ],
+      "id": "281f7f0f-9f9d-4f7f-9886-2305abd8f50b",
+      "name": "Division ROL DOC/ADM"
+    },
+    {
+      "parameters": {
+        "mode": "chooseBranch"
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        3248,
+        464
+      ],
+      "id": "ac589c97-a433-4398-ad74-a082ed7fc0c0",
+      "name": "Merge Administrativos Salientes"
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{$node[\"ID_AD_SA\"].json.id}}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 2042413524,
+          "mode": "list",
+          "cachedResultName": "MOV_ADMITIVO_HACIA_EL_EXTERIOR",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1OSWV0v7ZcOZOyimMMSIZOL1vVDb1SBGd28xrnqJ2_3I/edit#gid=2042413524"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "AÑO": "={{ $json.ANO }}",
+            "SEMESTRE": "={{ $json.SEMESTRE }}",
+            "PRIMER_NOMBRE": "={{ $json.PRIMER_NOMBRE }}",
+            "SEGUNDO_NOMBRE": "={{ $json.SEGUNDO_NOMBRE }}",
+            "PRIMER_APELLIDO": "={{ $json.PRIMER_APELLIDO }}",
+            "SEGUNDO_APELLIDO": "={{ $json.SEGUNDO_APELLIDO }}",
+            "ID_PAIS_EXTRANJERO": "={{ $json.CODIGO_ISO }}",
+            "INSTITUCION_EXTRANJERA": "={{ $json.INSTITUCION_DESTINO }}",
+            "ID_TIPO_MOV_ADM_EXTERIOR": "={{ $json.CODIGO }}",
+            "MOVILIDAD_POR_CONVENIO": "=S",
+            "CODIGO_CONVENIO": "={{ $json.CODIGO_CONVENIO }}",
+            "NUM_DIAS_MOVILIDAD": "={{ $json.DURACION_DIAS }}",
+            "ID_TIPO_DOCUMENTO": "={{ $json.TIPO_DE_DOCUMENTO }}",
+            "NUM_DOCUMENTO": "={{ $json.NUMERO_DOCUMENTO }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "AÑO",
+              "displayName": "AÑO",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "SEMESTRE",
+              "displayName": "SEMESTRE",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "ID_TIPO_DOCUMENTO",
+              "displayName": "ID_TIPO_DOCUMENTO",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "NUM_DOCUMENTO",
+              "displayName": "NUM_DOCUMENTO",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "PRIMER_NOMBRE",
+              "displayName": "PRIMER_NOMBRE",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "SEGUNDO_NOMBRE",
+              "displayName": "SEGUNDO_NOMBRE",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "PRIMER_APELLIDO",
+              "displayName": "PRIMER_APELLIDO",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "SEGUNDO_APELLIDO",
+              "displayName": "SEGUNDO_APELLIDO",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "ID_PAIS_EXTRANJERO",
+              "displayName": "ID_PAIS_EXTRANJERO",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "INSTITUCION_EXTRANJERA",
+              "displayName": "INSTITUCION_EXTRANJERA",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "ID_TIPO_MOV_ADM_EXTERIOR",
+              "displayName": "ID_TIPO_MOV_ADM_EXTERIOR",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "NUM_DIAS_MOVILIDAD",
+              "displayName": "NUM_DIAS_MOVILIDAD",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "MOVILIDAD_POR_CONVENIO",
+              "displayName": "MOVILIDAD_POR_CONVENIO",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "CODIGO_CONVENIO",
+              "displayName": "CODIGO_CONVENIO",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "ID_FUENTE_NACIONAL_INVESTIG",
+              "displayName": "ID_FUENTE_NACIONAL_INVESTIG",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "VALOR_FINANCIACION_NACIONAL",
+              "displayName": "VALOR_FINANCIACION_NACIONAL",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "ID_FUENTE_INTERNACIONAL",
+              "displayName": "ID_FUENTE_INTERNACIONAL",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "ID_PAIS_FINANCIADOR",
+              "displayName": "ID_PAIS_FINANCIADOR",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "VALOR_FINANCIACION_INTERNAC",
+              "displayName": "VALOR_FINANCIACION_INTERNAC",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        3472,
+        448
+      ],
+      "id": "c88de1bb-ea46-4b39-b942-40645114a2a5",
+      "name": "Llenado SNIES Administrativos Salientes",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "UNMBokPLhTvFTs2t",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c8181493-19a7-4d35-ab2e-70c52f50ea51",
+              "leftValue": "={{ $json.ROL }}",
+              "rightValue": "Estudiante",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2448,
+        656
+      ],
+      "id": "66f0cc31-de38-4454-94f5-b92055bfd743",
+      "name": "Divison ROL EST/DOC"
+    },
+    {
+      "parameters": {
+        "mode": "chooseBranch"
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        3264,
+        672
+      ],
+      "id": "4ca5318a-1eef-4318-bdff-727fc522b5b0",
+      "name": "Merge estudiantes entrantes"
+    },
+    {
+      "parameters": {
+        "mode": "chooseBranch"
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        3264,
+        880
+      ],
+      "id": "ead8986b-6087-449b-b667-55e8119cb753",
+      "name": "Merge Docentes Entrantes"
+    },
+    {
+      "parameters": {
+        "mode": "chooseBranch"
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        3248,
+        1104
+      ],
+      "id": "672f7b15-c498-4d22-8523-1e97f3c3bd66",
+      "name": "Merge Administrativos Entrantes"
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{$node[\"ID_AD_EN\"].json.id}}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 1063545249,
+          "mode": "list",
+          "cachedResultName": "MOV_ADMITIVO_HACIA_COLOMBIA",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1os6ZWCIY09YAsUmcnKvLarx6BOB9EO-JebrCUDj-mDk/edit#gid=1063545249"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "AÑO": "={{ $json.ANO }}",
+            "SEMESTRE": "={{ $json.SEMESTRE }}",
+            "PRIMER_NOMBRE": "={{ $json.PRIMER_NOMBRE }}",
+            "SEGUNDO_NOMBRE": "={{ $json.SEGUNDO_NOMBRE }}",
+            "PRIMER_APELLIDO": "={{ $json.PRIMER_APELLIDO }}",
+            "SEGUNDO_APELLIDO": "={{ $json.SEGUNDO_APELLIDO }}",
+            "ID_PAIS_EXTRANJERO": "={{ $json.CODIGO_ISO }}",
+            "INSTITUCION_EXTRANJERA": "={{ $json.INSTITUCION_ORIGEN }}",
+            "ID_TIPO_MOV_ADM_EXTERIOR": "={{ $json.CODIGO }}",
+            "NUM_DIAS_MOVILIDAD": "={{ $json.DURACION_DIAS }}",
+            "MOVILIDAD_POR_CONVENIO": "S",
+            "CODIGO_CONVENIO": "={{ $json.CODIGO_CONVENIO }}",
+            "ID_TIPO_DOCUMENTO": "={{ $json.TIPO_DE_DOCUMENTO }}",
+            "NUM_DOCUMENTO": "={{ $json.NUMERO_DOCUMENTO }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "AÑO",
+              "displayName": "AÑO",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "SEMESTRE",
+              "displayName": "SEMESTRE",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "ID_TIPO_DOCUMENTO",
+              "displayName": "ID_TIPO_DOCUMENTO",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "NUM_DOCUMENTO",
+              "displayName": "NUM_DOCUMENTO",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "PRIMER_NOMBRE",
+              "displayName": "PRIMER_NOMBRE",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "SEGUNDO_NOMBRE",
+              "displayName": "SEGUNDO_NOMBRE",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "PRIMER_APELLIDO",
+              "displayName": "PRIMER_APELLIDO",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "SEGUNDO_APELLIDO",
+              "displayName": "SEGUNDO_APELLIDO",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "ID_PAIS_EXTRANJERO",
+              "displayName": "ID_PAIS_EXTRANJERO",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "INSTITUCION_EXTRANJERA",
+              "displayName": "INSTITUCION_EXTRANJERA",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "ID_TIPO_MOV_ADM_EXTERIOR",
+              "displayName": "ID_TIPO_MOV_ADM_EXTERIOR",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "NUM_DIAS_MOVILIDAD",
+              "displayName": "NUM_DIAS_MOVILIDAD",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "MOVILIDAD_POR_CONVENIO",
+              "displayName": "MOVILIDAD_POR_CONVENIO",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "CODIGO_CONVENIO",
+              "displayName": "CODIGO_CONVENIO",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "ID_FUENTE_NACIONAL_INVESTIG",
+              "displayName": "ID_FUENTE_NACIONAL_INVESTIG",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "VALOR_FINANCIACION_NACIONAL",
+              "displayName": "VALOR_FINANCIACION_NACIONAL",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "ID_FUENTE_INTERNACIONAL",
+              "displayName": "ID_FUENTE_INTERNACIONAL",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "ID_PAIS_FINANCIADOR",
+              "displayName": "ID_PAIS_FINANCIADOR",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "VALOR_FINANCIACION_INTERNAC",
+              "displayName": "VALOR_FINANCIACION_INTERNAC",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        3488,
+        1104
+      ],
+      "id": "ec7ee55c-771f-48c8-934e-10a5fdd79647",
+      "name": "Llenado SNIES Administrativos Entrantes",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "UNMBokPLhTvFTs2t",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{$node[\"ID_DO_EN\"].json.id}}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 136550726,
+          "mode": "list",
+          "cachedResultName": "MOV_DOCENTE_HACIA_COLOMBIA",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/14l1pkVvk8AVqYy8EQczu7q-OPkDiZ47BVWdpiXz5UuU/edit#gid=136550726"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "AÑO": "={{ $json.ANO }}",
+            "SEMESTRE": "={{ $json.SEMESTRE }}",
+            "PRIMER NOMBRE": "={{ $json.PRIMER_NOMBRE }}",
+            "SEGUNDO_NOMBRE": "={{ $json.SEGUNDO_NOMBRE }}",
+            "PRIMER_APELLIDO": "={{ $json.PRIMER_APELLIDO }}",
+            "SEGUNDO_APELLIDO": "={{ $json.SEGUNDO_APELLIDO }}",
+            "ID_PAIS_EXTRANJERO": "={{ $json.CODIGO_ISO }}",
+            "INSTITUCION_EXTRANJERA": "={{ $json.INSTITUCION_ORIGEN }}",
+            "ID_TIPO_MOV_DOC_EXTRANJ": "={{ $json.CODIGO }}",
+            "NUM_DIAS_MOVILIDAD": "={{ $json.DURACION_DIAS }}",
+            "MOVILIDAD_POR_CONVENIO": "S",
+            "CODIGO_CONVENIO": "={{ $json.CODIGO_CONVENIO }}",
+            "ID_TIPO_DOCUMENTO": "={{ $json.TIPO_DE_DOCUMENTO }}",
+            "NUM_DOCUMENTO": "={{ $json.NUMERO_DOCUMENTO }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "AÑO",
+              "displayName": "AÑO",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "SEMESTRE",
+              "displayName": "SEMESTRE",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "ID_TIPO_DOCUMENTO",
+              "displayName": "ID_TIPO_DOCUMENTO",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "NUM_DOCUMENTO",
+              "displayName": "NUM_DOCUMENTO",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "PRIMER NOMBRE",
+              "displayName": "PRIMER NOMBRE",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "SEGUNDO_NOMBRE",
+              "displayName": "SEGUNDO_NOMBRE",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "PRIMER_APELLIDO",
+              "displayName": "PRIMER_APELLIDO",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "SEGUNDO_APELLIDO",
+              "displayName": "SEGUNDO_APELLIDO",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "ID_PAIS_EXTRANJERO",
+              "displayName": "ID_PAIS_EXTRANJERO",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "INSTITUCION_EXTRANJERA",
+              "displayName": "INSTITUCION_EXTRANJERA",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "ID_TIPO_MOV_DOC_EXTRANJ",
+              "displayName": "ID_TIPO_MOV_DOC_EXTRANJ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "NUM_DIAS_MOVILIDAD",
+              "displayName": "NUM_DIAS_MOVILIDAD",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "MOVILIDAD_POR_CONVENIO",
+              "displayName": "MOVILIDAD_POR_CONVENIO",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "CODIGO_CONVENIO",
+              "displayName": "CODIGO_CONVENIO",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "ID_FUENTE_NACIONAL_INVESTIG",
+              "displayName": "ID_FUENTE_NACIONAL_INVESTIG",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "VALOR_FINANCIACION_NACIONAL",
+              "displayName": "VALOR_FINANCIACION_NACIONAL",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "ID_FUENTE_INTERNACIONAL",
+              "displayName": "ID_FUENTE_INTERNACIONAL",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "ID_PAIS_FINANCIADOR",
+              "displayName": "ID_PAIS_FINANCIADOR",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "VALOR_FINANCIACION_INTERNAC",
+              "displayName": "VALOR_FINANCIACION_INTERNAC",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        3504,
+        912
+      ],
+      "id": "202e13ae-222d-45a7-86fb-5fc61c1578b5",
+      "name": "Llenado SNIES Docentes Entrantes",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "UNMBokPLhTvFTs2t",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{$node[\"ID_ES_EN\"].json.id}}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 319770042,
+          "mode": "list",
+          "cachedResultName": "MOV_ESTUD_HACIA_COLOMBIA",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1kXD7VDNOC9xQyMQXqDVvRaxkKJlbGndo8gmKzmv1joo/edit#gid=319770042"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "AÑO": "={{ $json.ANO }}",
+            "SEMESTRE": "={{ $json.SEMESTRE }}",
+            "PRIMER_NOMBRE": "={{ $json.PRIMER_NOMBRE }}",
+            "SEGUNDO_NOMBRE": "={{ $json.SEGUNDO_NOMBRE }}",
+            "PRIMER_APELLIDO": "={{ $json.PRIMER_APELLIDO }}",
+            "SEGUNDO_APELLIDO": "={{ $json.SEGUNDO_APELLIDO }}",
+            "ID_PAIS_EXTRANJERO": "={{ $json.CODIGO_ISO }}",
+            "INSTITUCION_EXTRANJERA": "={{ $json.INSTITUCION_ORIGEN }}",
+            "ID_TIPO_MOV_EST_EXTRANJ": "={{ $json.CODIGO }}",
+            "NUM_DIAS_MOVILIDAD": "={{ $json.DURACION_DIAS }}",
+            "MOVILIDAD_POR_CONVENIO": "S",
+            "CODIGO_CONVENIO": "={{ $json.CODIGO_CONVENIO }}",
+            "ID_TIPO_DOCUMENTO": "={{ $json.TIPO_DE_DOCUMENTO }}",
+            "NUM_DOCUMENTO": "={{ $json.NUMERO_DOCUMENTO }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "AÑO",
+              "displayName": "AÑO",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "SEMESTRE",
+              "displayName": "SEMESTRE",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "ID_TIPO_DOCUMENTO",
+              "displayName": "ID_TIPO_DOCUMENTO",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "NUM_DOCUMENTO",
+              "displayName": "NUM_DOCUMENTO",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "PRIMER_NOMBRE",
+              "displayName": "PRIMER_NOMBRE",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "SEGUNDO_NOMBRE",
+              "displayName": "SEGUNDO_NOMBRE",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "PRIMER_APELLIDO",
+              "displayName": "PRIMER_APELLIDO",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "SEGUNDO_APELLIDO",
+              "displayName": "SEGUNDO_APELLIDO",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "ID_PAIS_EXTRANJERO",
+              "displayName": "ID_PAIS_EXTRANJERO",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "INSTITUCION_EXTRANJERA",
+              "displayName": "INSTITUCION_EXTRANJERA",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "ID_TIPO_MOV_EST_EXTRANJ",
+              "displayName": "ID_TIPO_MOV_EST_EXTRANJ",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "NUM_DIAS_MOVILIDAD",
+              "displayName": "NUM_DIAS_MOVILIDAD",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "MOVILIDAD_POR_CONVENIO",
+              "displayName": "MOVILIDAD_POR_CONVENIO",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "CODIGO_CONVENIO",
+              "displayName": "CODIGO_CONVENIO",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "ID_FUENTE_NACIONAL_INVESTIG",
+              "displayName": "ID_FUENTE_NACIONAL_INVESTIG",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "VALOR_FINANCIACION_NACIONAL",
+              "displayName": "VALOR_FINANCIACION_NACIONAL",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "ID_FUENTE_INTERNACIONAL",
+              "displayName": "ID_FUENTE_INTERNACIONAL",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "ID_PAIS_FINANCIADOR",
+              "displayName": "ID_PAIS_FINANCIADOR",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "VALOR_FINANCIACION_INTERNAC",
+              "displayName": "VALOR_FINANCIACION_INTERNAC",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        3488,
+        672
+      ],
+      "id": "1609c434-b5c5-41b4-8203-cb558fd20625",
+      "name": "Llenado SNIES Estudiantes Entrantes",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "UNMBokPLhTvFTs2t",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "## Obtención, limpieza y transformacion de datos\n",
+        "height": 480,
+        "width": 1232
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -256,
+        -144
+      ],
+      "typeVersion": 1,
+      "id": "8e32c049-2a49-4b4c-bfde-fc14d2796750",
+      "name": "Sticky Note"
+    },
+    {
+      "parameters": {
+        "content": "## Carga excel recibido\nGuarda el checklist en una carpeta de drive para llevar un registro.",
+        "height": 240,
+        "width": 432,
+        "color": 2
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -16,
+        -416
+      ],
+      "typeVersion": 1,
+      "id": "f2978b95-2536-45fe-bd0f-829cb260b126",
+      "name": "Sticky Note1"
+    },
+    {
+      "parameters": {
+        "content": "## Enriquecimiento, segmentación y estandarización de datos\n\n**Propósito:** Agregar los datos necesarios desde la base de datos transaccional, segmentar la información primero por **movilidad** y luego por **rol**, y dejar solo los campos requeridos con nombres estandarizados para facilitar su consumo.\n\n## Resumen del proceso\n1. **Ingesta y enriquecimiento** desde la BD transaccional (`executeQuery`).\n2. **Consolidación** de registros mediante uniones y merges (`combine`, `Merge ENTRANTES`, `Merge SALIENTES`).\n3. **Segmentación por movilidad:** separación de **entrantes** y **salientes**.\n4. **Curado de esquema:** selección de campos útiles y **formateo de nombres** (`Formateo_nombre_celdas`).\n5. **Segmentación por rol:** ruteo específico para **EST/DOC** y **DOC/ADM**.\n6. **Salidas:** conjuntos finales por rol con estructura limpia y uniforme.\n",
+        "height": 1616,
+        "width": 1808,
+        "color": 6
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        1008,
+        -352
+      ],
+      "typeVersion": 1,
+      "id": "f87ed03a-3665-4e4d-adfb-a4d17b904c1c",
+      "name": "Sticky Note2"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "5f354d3b-9e42-4128-bc79-8687ba5ddbe6",
+              "leftValue": "=Division ROL DOC/ADM",
+              "rightValue": "Docente",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2640,
+        912
+      ],
+      "id": "60040655-8950-4194-ba5a-b7c2fa5a6917",
+      "name": "Division por ROL DOC/ADM"
+    },
+    {
+      "parameters": {
+        "content": "## Obtención de las plantillas de los SNIES acorde a su rol y tipo de movilidad\n",
+        "height": 1584,
+        "width": 336,
+        "color": 5
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        2848,
+        -224
+      ],
+      "typeVersion": 1,
+      "id": "fa69ba70-629c-4777-871f-7da36e6f8e85",
+      "name": "Sticky Note3"
+    },
+    {
+      "parameters": {
+        "content": "## CARGA DE LOS SNIES PROCESADOS ",
+        "height": 1552,
+        "width": 528,
+        "color": 4
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        3216,
+        -192
+      ],
+      "typeVersion": 1,
+      "id": "8033f354-26c9-456f-8b0f-32bfcc8a62be",
+      "name": "Sticky Note4"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook Ingesta-Excel": {
+      "main": [
+        [
+          {
+            "node": "Extract from File",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Carga checklist recibido",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract from File": {
+      "main": [
+        [
+          {
+            "node": "SEPARAR SOLO COLUMNAS A USAR",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "FORMATEO FECHAS ISO": {
+      "main": [
+        [
+          {
+            "node": "SEPARACION FECHA",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SEPARACION FECHA": {
+      "main": [
+        [
+          {
+            "node": "SEPARACION DE NOMBRE",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SEPARACION DE NOMBRE": {
+      "main": [
+        [
+          {
+            "node": "Nomenclatura Documentos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Nomenclatura Documentos": {
+      "main": [
+        [
+          {
+            "node": "Empalme codigos movilidad con nombre",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Fusión codigos movilidades con datos de tabla",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CODIGO  PAIS ENTRANTES": {
+      "main": [
+        [
+          {
+            "node": "Merge ENTRANTES",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "CODIGO  PAIS SALIENTES": {
+      "main": [
+        [
+          {
+            "node": "Merge SALIENTES",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge SALIENTES": {
+      "main": [
+        [
+          {
+            "node": "Datos finales",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge ENTRANTES": {
+      "main": [
+        [
+          {
+            "node": "Datos finales1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Datos finales": {
+      "main": [
+        [
+          {
+            "node": "Formateo_nombre_celdas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Datos finales1": {
+      "main": [
+        [
+          {
+            "node": "Formateo_nombre_celdas1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ID_ES_EN": {
+      "main": [
+        [
+          {
+            "node": "Merge estudiantes entrantes",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Copy file3": {
+      "main": [
+        [
+          {
+            "node": "Merge Administrativos Entrantes",
+            "type": "main",
+            "index": 1
+          },
+          {
+            "node": "Merge Docentes Entrantes",
+            "type": "main",
+            "index": 1
+          },
+          {
+            "node": "Merge estudiantes entrantes",
+            "type": "main",
+            "index": 1
+          },
+          {
+            "node": "SOLO EL ID2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ID_AD_EN": {
+      "main": [
+        [
+          {
+            "node": "Merge Administrativos Entrantes",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "ID_DO_EN": {
+      "main": [
+        [
+          {
+            "node": "Merge Docentes Entrantes",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "ID_ES_SA": {
+      "main": [
+        [
+          {
+            "node": "Merge estudiantes salientes",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "ID_AD_SA": {
+      "main": [
+        [
+          {
+            "node": "Merge Administrativos Salientes",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "ID_DO_SA": {
+      "main": [
+        [
+          {
+            "node": "Merge Docentes Salientes",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Carga checklist recibido": {
+      "main": [
+        []
+      ]
+    },
+    "SEPARAR SOLO COLUMNAS A USAR": {
+      "main": [
+        [
+          {
+            "node": "FORMATEO FECHAS ISO",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Separación Salientes y Entrantes": {
+      "main": [
+        [
+          {
+            "node": "Merge SALIENTES",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "CODIGO  PAIS SALIENTES",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Merge ENTRANTES",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "CODIGO  PAIS ENTRANTES",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Empalme codigos movilidad con nombre": {
+      "main": [
+        [
+          {
+            "node": "Fusión codigos movilidades con datos de tabla",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Fusión codigos movilidades con datos de tabla": {
+      "main": [
+        [
+          {
+            "node": "Separación Salientes y Entrantes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Formateo_nombre_celdas": {
+      "main": [
+        [
+          {
+            "node": "Divison por ROL EST/DOC",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Formateo_nombre_celdas1": {
+      "main": [
+        [
+          {
+            "node": "Divison ROL EST/DOC",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge estudiantes salientes": {
+      "main": [
+        [
+          {
+            "node": "Llenado SNIES Estudiantes salientes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Docentes Salientes": {
+      "main": [
+        [
+          {
+            "node": "Llenado SNIES Docentes Salientes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Divison por ROL EST/DOC": {
+      "main": [
+        [
+          {
+            "node": "ID_ES_SA",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge estudiantes salientes",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Division ROL DOC/ADM",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Division ROL DOC/ADM": {
+      "main": [
+        [
+          {
+            "node": "ID_DO_SA",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge Docentes Salientes",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "ID_AD_SA",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge Administrativos Salientes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Administrativos Salientes": {
+      "main": [
+        [
+          {
+            "node": "Llenado SNIES Administrativos Salientes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Divison ROL EST/DOC": {
+      "main": [
+        [
+          {
+            "node": "ID_ES_EN",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge estudiantes entrantes",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Division por ROL DOC/ADM",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge estudiantes entrantes": {
+      "main": [
+        [
+          {
+            "node": "Llenado SNIES Estudiantes Entrantes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Docentes Entrantes": {
+      "main": [
+        [
+          {
+            "node": "Llenado SNIES Docentes Entrantes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Administrativos Entrantes": {
+      "main": [
+        [
+          {
+            "node": "Llenado SNIES Administrativos Entrantes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Division por ROL DOC/ADM": {
+      "main": [
+        [
+          {
+            "node": "ID_DO_EN",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge Docentes Entrantes",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "ID_AD_EN",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge Administrativos Entrantes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "6d147c16-28ca-44cd-afaf-4af38f23e5fd",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "2cd340a95997463a0c9a40a8fe9d370c30e28072c266d54ccea115c8886e9ec2"
+  },
+  "id": "fj9zhS542blFYF26",
+  "tags": []
+}

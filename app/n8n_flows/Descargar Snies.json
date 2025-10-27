@@ -1,0 +1,303 @@
+{
+  "name": "Descargar Snies",
+  "nodes": [
+    {
+      "parameters": {
+        "jsCode": "// Query param: ?name=Movilidad de estudiantes hacia el exterior 2025-1\nconst raw = ($json.query?.name || '').toString().trim();\nif (!raw) {\n  return [{ json: { __err: 'missing name' } }];\n}\n\n// Normaliza\nconst s = raw.normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').toLowerCase();\n\n// Periodo: 2025-1 | 2025-I | 2025-II | 2025 1\nconst m = s.match(/(\\d{4})\\s*[-_ ]?\\s*(i{1,2}|[12])/i);\nlet year, sem;\nif (m) {\n  year = m[1];\n  const ss = (m[2] + '').toUpperCase();\n  sem = (ss === 'I' || ss === '1') ? 1 : 2;\n} else {\n  const d = new Date();\n  year = String(d.getFullYear());\n  sem = d.getMonth() < 6 ? 1 : 2;\n}\n\n// Detecta carril por palabras clave\nconst isEst = /estudiante/.test(s);\nconst isDoc = /docente/.test(s);\nconst isAdm = /administrativ/.test(s);\n\nconst haciaExterior  = /hacia el exterior/.test(s) || /hacia exterior/.test(s);\nconst haciaColombia  = /hacia colombia/.test(s) || /del exterior hacia colombia/.test(s);\n\nlet route, prefix, label;\n\n// COMPLETA TUS CARPETAS AQUÍ:\nconst FOLDERS = {\n  est_ext: '1DUO5fqMYixuw56Qkz56aI3bitrOhjTCh',\n  est_col: '1_vcpLtvXsdE1IcfntDuudsWtRy4Sdjj4',\n  doc_ext: '13dVqlVsoaIhwHk8g332dIuUezIOhjz2B',\n  doc_col: '1XpRoJMZrA61JJTVtbnAmqxFeeLx0bvP5',\n  adm_ext: '19eKF5C02g8aQ2JSUF6RyDqslENvY0L4m',\n  adm_col: '123IGMPCzMPngHpGNPktDRcagX0SjcErw',\n};\n\nif (isEst && haciaExterior)  { route='est_ext'; prefix='Movilidad_estudiantes_hacia_exterior'; label='Movilidad de estudiantes hacia el exterior'; }\nif (isEst && haciaColombia)  { route='est_col'; prefix='Movilidad_estudiantes_hacia_colombia'; label='Movilidad de estudiantes del exterior hacia Colombia'; }\nif (isDoc && haciaExterior)  { route='doc_ext'; prefix='Movilidad_docentes_hacia_exterior'; label='Movilidad de docentes hacia el exterior'; }\nif (isDoc && haciaColombia)  { route='doc_col'; prefix='Movilidad_docentes_hacia_colombia'; label='Movilidad de docentes del exterior hacia Colombia'; }\nif (isAdm && haciaExterior)  { route='adm_ext'; prefix='Movilidad_personal_administrativo_hacia_exterior'; label='Movilidad de personal administrativo hacia el exterior'; }\nif (isAdm && haciaColombia)  { route='adm_col'; prefix='Movilidad_personal_administrativo_del_exterior_hacia_colombia'; label='Movilidad de personal administrativo del exterior hacia Colombia'; }\n\nif (!route) {\n  return [{ json: { __err: 'no route matched', raw } }];\n}\n\nconst fileName     = `${prefix}_${year}_${sem}`; // nombre exacto en Drive\nconst downloadName = `${label} ${year}-${sem}.xlsx`;\nconst folderId     = FOLDERS[route];\n\nreturn [{ json: { route, folderId, fileName, downloadName } }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        192,
+        0
+      ],
+      "id": "391283c8-ea13-4660-8b93-a953747ee090",
+      "name": "Normaliza el query de consulta"
+    },
+    {
+      "parameters": {
+        "path": "snies/download",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "ddad9dac-7eb4-4d09-bc99-a6157a665706",
+      "name": "Webhook SNIES a Descargar",
+      "webhookId": "d5f852b6-caa7-42c6-80ca-8a49a871ee9c"
+    },
+    {
+      "parameters": {
+        "resource": "fileFolder",
+        "queryString": "={{$json.fileName}}",
+        "filter": {
+          "folderId": {
+            "__rl": true,
+            "value": "={{$json.folderId}}",
+            "mode": "id"
+          }
+        },
+        "options": {
+          "fields": [
+            "mimeType",
+            "name",
+            "id"
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        400,
+        0
+      ],
+      "id": "a4553be0-3e92-4fc6-a8ad-540ab0dc4976",
+      "name": "Busqueda SNIES en DRIVE",
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "bzNSbyldV5wLIJ8R",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cb70dd94-c23d-4c80-942c-4365136b214a",
+              "leftValue": "={{ $items(\"Busqueda SNIES en DRIVE\")}}",
+              "rightValue": 0,
+              "operator": {
+                "type": "array",
+                "operation": "empty",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "094483dc-41a7-4920-8561-c3f87baccd84",
+              "leftValue": "={{ $json.id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        592,
+        0
+      ],
+      "id": "640f0219-9437-4d28-a9c3-c9903f23e38b",
+      "name": "Verifica si el SNIES existe"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{ \"error\": \"Archivo no encontrado\" }",
+        "options": {
+          "responseCode": 404
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        816,
+        176
+      ],
+      "id": "00c43f1c-a111-4798-ab5b-1ffc0b75f0c0",
+      "name": "SNIES NO EXISTE 404"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "7b8ab496-4e06-4654-b0d6-0ae4382f048a",
+              "leftValue": "={{ $json.mimeType }}",
+              "rightValue": "application/vnd.google-apps.spreadsheet",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        816,
+        -16
+      ],
+      "id": "5ea4365d-f2ca-40f7-9c2f-a9de1a1a9953",
+      "name": "Formato .xlsx?"
+    },
+    {
+      "parameters": {
+        "operation": "download",
+        "fileId": {
+          "__rl": true,
+          "value": "={{ $json.id }}",
+          "mode": "id"
+        },
+        "options": {
+          "googleFileConversion": {
+            "conversion": {
+              "sheetsToFormat": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        1072,
+        -96
+      ],
+      "id": "6579c404-59a4-4044-b72e-23b564e8deb9",
+      "name": "Descarga y formatea a .XLSX",
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "bzNSbyldV5wLIJ8R",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "binary",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        1232,
+        96
+      ],
+      "id": "01c86e0f-101d-4d82-88b8-f0ba50c08b08",
+      "name": "Devuelve el archivo a descargar"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Normaliza el query de consulta": {
+      "main": [
+        [
+          {
+            "node": "Busqueda SNIES en DRIVE",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook SNIES a Descargar": {
+      "main": [
+        [
+          {
+            "node": "Normaliza el query de consulta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Busqueda SNIES en DRIVE": {
+      "main": [
+        [
+          {
+            "node": "Verifica si el SNIES existe",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verifica si el SNIES existe": {
+      "main": [
+        [
+          {
+            "node": "Formato .xlsx?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "SNIES NO EXISTE 404",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Formato .xlsx?": {
+      "main": [
+        [
+          {
+            "node": "Descarga y formatea a .XLSX",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Devuelve el archivo a descargar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Descarga y formatea a .XLSX": {
+      "main": [
+        [
+          {
+            "node": "Devuelve el archivo a descargar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "5959d7af-3c25-431e-b3b4-a47a75c24aa5",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "2cd340a95997463a0c9a40a8fe9d370c30e28072c266d54ccea115c8886e9ec2"
+  },
+  "id": "8fT5a4hzWszxDhgz",
+  "tags": []
+}

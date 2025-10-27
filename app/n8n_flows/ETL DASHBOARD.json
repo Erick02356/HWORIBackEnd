@@ -1,0 +1,713 @@
+{
+  "name": "ETL DASHBOARD",
+  "nodes": [
+    {
+      "parameters": {
+        "jsCode": "// --- Function node: convertir solo 'Fecha Incio' y 'Fecha Finalización' --- //\n\nfunction excelSerialToDate(serial, use1904 = false) {\n  const num = Number(serial);\n  if (!isFinite(num) || num < 1) return null;\n\n  if (use1904) {\n    const epoch = Date.UTC(1904, 0, 1); // 1904-01-01\n    const ms = Math.round(num * 24 * 60 * 60 * 1000);\n    return new Date(epoch + ms);\n  } else {\n    // 1900 system: corregir bug del 29-feb-1900\n    let serialAdj = num;\n    if (serialAdj >= 60) serialAdj = serialAdj - 1;\n    const epoch = Date.UTC(1899, 11, 31); // 1899-12-31\n    const ms = Math.round(serialAdj * 24 * 60 * 60 * 1000);\n    return new Date(epoch + ms);\n  }\n}\n\nfunction looksLikeExcelDate(v) {\n  if (v === null || v === undefined) return false;\n  if (typeof v === 'number') return v > 30;\n  if (typeof v === 'string') {\n    const s = v.trim();\n    if (/^\\d+(\\.\\d+)?$/.test(s)) {\n      const n = Number(s);\n      return isFinite(n) && n > 30;\n    }\n  }\n  return false;\n}\n\nfunction formatDateUTC(dt) {\n  if (!dt) return null;\n  const Y = dt.getUTCFullYear();\n  const M = String(dt.getUTCMonth() + 1).padStart(2, '0');\n  const D = String(dt.getUTCDate()).padStart(2, '0');\n  const hh = String(dt.getUTCHours()).padStart(2, '0');\n  const mm = String(dt.getUTCMinutes()).padStart(2, '0');\n  const ss = String(dt.getUTCSeconds()).padStart(2, '0');\n\n  // Si no hay hora (00:00:00) devolvemos solo la fecha\n  if (dt.getUTCHours() === 0 && dt.getUTCMinutes() === 0 && dt.getUTCSeconds() === 0) {\n    return `${Y}-${M}-${D}`;\n  } else {\n    return `${Y}-${M}-${D} ${hh}:${mm}:${ss}`;\n  }\n}\n\nfunction convertExcelField(v) {\n  if (v === undefined || v === null) return v;\n  if (typeof v === 'string') {\n    const t = v.trim();\n    if (t === '' || t.toLowerCase() === 'null') return null;\n  }\n\n  if (!looksLikeExcelDate(v)) {\n    return v; // no es serial, dejar como está\n  }\n\n  // intentar con 1900\n  let dt = excelSerialToDate(v, false);\n  const year = dt ? dt.getUTCFullYear() : null;\n\n  // si da año raro, intentar 1904\n  if (!year || year < 1900 || year > 2100) {\n    const dt2 = excelSerialToDate(v, true);\n    const y2 = dt2 ? dt2.getUTCFullYear() : null;\n    if (y2 && y2 >= 1900 && y2 <= 2100) dt = dt2;\n  }\n\n  if (!dt) return null;\n  return formatDateUTC(dt);\n}\n\n// --- Columnas a convertir (uso exacto de los nombres que diste) ---\nconst dateKeys = ['Fecha Inicio', 'Fecha Finalización'];\n\n// Procesar todos los items entrantes\nconst all = $input.all();\nfor (const item of all) {\n  for (const key of dateKeys) {\n    if (Object.prototype.hasOwnProperty.call(item.json, key)) {\n      try {\n        item.json[key] = convertExcelField(item.json[key]);\n      } catch (err) {\n        // en caso de error puntal dejamos null (puedes cambiar a mantener valor original)\n        item.json[key] = null;\n      }\n    }\n  }\n}\n\nreturn all;\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3552,
+        704
+      ],
+      "id": "e6fe6eab-2987-445a-9b70-6b24837c1c27",
+      "name": "FormateoFechas1"
+    },
+    {
+      "parameters": {
+        "operation": "getTimeBetweenDates",
+        "startDate": "={{ $json['Fecha Inicio'] }}",
+        "endDate": "={{ $json['Fecha Finalización'] }}",
+        "outputFieldName": "DuracionDias",
+        "options": {
+          "includeInputFields": true,
+          "isoString": false
+        }
+      },
+      "type": "n8n-nodes-base.dateTime",
+      "typeVersion": 2,
+      "position": [
+        3888,
+        704
+      ],
+      "id": "6fd4a100-3aaa-4e03-9dcb-f50a5c25dd6c",
+      "name": "CalcularDuracionEnDias1"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Loop over input items and convert DuracionDias from object to rounded number\nfor (const item of $input.all()) {\n  // Check if DuracionDias exists and has a days property\n  if (item.json.DuracionDias !== undefined && item.json.DuracionDias !== null && item.json.DuracionDias.days !== undefined) {\n    // Convert the days value to number and round it\n    const duration = Number(item.json.DuracionDias.days);\n    \n    // Check if it's a valid number before rounding\n    if (!isNaN(duration)) {\n      // Replace the object with the rounded number\n      item.json.DuracionDias = Math.round(duration);\n    } else {\n      // If not a valid number, set to null\n      item.json.DuracionDias = null;\n    }\n  }\n}\n\nreturn $input.all();"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4080,
+        752
+      ],
+      "id": "508d8406-c4be-4c9c-89e4-eaa2edf21a8f",
+      "name": "RoundDias1"
+    },
+    {
+      "parameters": {
+        "content": "## Proceso Transformación/Limpieza de Datos\n\n",
+        "height": 752,
+        "width": 1056,
+        "color": 4
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        3344,
+        512
+      ],
+      "typeVersion": 1,
+      "id": "62dd5ffe-9c6b-4b7f-b613-f2d9603f0324",
+      "name": "Sticky Note3"
+    },
+    {
+      "parameters": {
+        "content": "## Carga en la bodega de datos\n\n",
+        "height": 1232,
+        "width": 1072,
+        "color": 5
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        4448,
+        432
+      ],
+      "typeVersion": 1,
+      "id": "87b548b3-6a36-446e-b32c-079430ccbd01",
+      "name": "Sticky Note4"
+    },
+    {
+      "parameters": {
+        "content": "## Extración de los datos\n",
+        "height": 768,
+        "width": 448
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        2880,
+        496
+      ],
+      "typeVersion": 1,
+      "id": "5f69e844-61ef-41a0-9e4c-a6d58f99bc3a",
+      "name": "Sticky Note5"
+    },
+    {
+      "parameters": {
+        "jsCode": "for (const item of $input.all()) {\n\n  const dateString = item.json[\"Fecha Inicio\"] \n  if (dateString) {\n    const date = new Date(dateString);\n    \n    const year = date.getFullYear();\n    const month = date.getMonth() + 1; \n    const day = date.getDate();\n    \n    const semester = month <= 6 ? 1 : 2;\n    \n    item.json.Año = year;\n    item.json.Mes = month;\n    item.json.Dia = day;\n    item.json.Semestre = semester;\n  } else {\n    item.json.Año = null;\n    item.json.Mes = null;\n    item.json.Dia = null;\n    item.json.Semestre = null;\n  }\n}\n\nreturn $input.all();"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3712,
+        848
+      ],
+      "id": "95f98e42-7db9-49df-bc0e-cba752b21b75",
+      "name": "SeparacionFecha"
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "Ano, Mes, Dia, Semestre, ['Pais Origen'], ['Pais Destino'], ['Institución Origen'], ['Institución Destino'], ['Sede Universidad'], ['Programa Academico'], Facultad, ['Dependencia Administrativa'], Edad, Genero, ['Estado civil'], Rol, ['Semestre Cursante'], ['Tipo Movilidad'], Modalidad, ['Entrante/Saliente'], ['Codigo Convenio'], DuracionDias",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        4560,
+        1360
+      ],
+      "id": "09da3d5b-df4c-4f30-af06-44ec5b8bad87",
+      "name": "STG_MOVILIDADES",
+      "alwaysOutputData": false
+    },
+    {
+      "parameters": {
+        "jsCode": "return items.map(item => {\n  const row = item.json;\n  const cleaned = {};\n\n  for (const [key, value] of Object.entries(row)) {\n    if (typeof value === 'string') {\n      const trimmed = value.trim();\n\n      if (trimmed === '' || trimmed.toLowerCase() === 'null') {\n        cleaned[key] = null;\n      } else {\n        cleaned[key] = trimmed;\n      }\n\n    } else if (value === undefined || value === null) {\n      cleaned[key] = null;\n\n    } else {\n      cleaned[key] = value;\n    }\n  }\n\n  return { json: cleaned };\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3376,
+        736
+      ],
+      "id": "ebbfe4f4-69d6-4fe9-bd64-ae1a24babb73",
+      "name": "LimpiezaDatos"
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "Edad, Genero, ['Estado civil'], Rol, ['Semestre Cursante']",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        4544,
+        848
+      ],
+      "id": "2f2d71c6-3489-4bf3-8dfc-66a5d9213e27",
+      "name": "Segmentación Movilizante",
+      "alwaysOutputData": false
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "['Programa Academico'], Facultad, ['Dependencia Administrativa']",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        4560,
+        704
+      ],
+      "id": "72170520-cb23-4ac1-bd4f-2db1c80e00ac",
+      "name": "Segmentación Programa",
+      "alwaysOutputData": false
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "['Pais Origen'], ['Pais Destino'], ['Institución Origen'], ['Institución Destino'], ['Sede Universidad']",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        4560,
+        512
+      ],
+      "id": "f6ab4bb7-a75f-49ee-a486-77e4123cc20c",
+      "name": "Segmentación Lugar",
+      "alwaysOutputData": false
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": " ['Tipo Movilidad'], Modalidad, ['Entrante/Saliente'], DuracionDias",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        4560,
+        1024
+      ],
+      "id": "6775e1db-af35-49f1-bb90-71173fa06be6",
+      "name": "Segmentación Movilidad",
+      "alwaysOutputData": false
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "=Ano, Mes, Dia, Semestre",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        4560,
+        1216
+      ],
+      "id": "19f6cf14-3bca-4de0-a671-2c260b40cf7d",
+      "name": "Segmentación tiempo",
+      "alwaysOutputData": false
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "ingesta-excel",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        2928,
+        736
+      ],
+      "id": "9bd3ef81-dfcd-4ebc-ae49-10ee7aee896d",
+      "name": "Webhook Ingesta-Excel",
+      "webhookId": "06f33ede-3032-436e-81f4-6617ce652f9e"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO datawarehouse.\"D_LUGAR\" (PaisOrigen,PaisDestino,InstitucionOrigen, InstitucionDestino,SedeInstitucion)\nVALUES (\n  {{ $json[\"['Pais Origen']\"] ? `'${$json[\"['Pais Origen']\"]}'` : 'NULL' }},\n  {{ $json[\"['Pais Destino']\"] ? `'${$json[\"['Pais Destino']\"]}'` : 'NULL' }},\n  {{ $json[\"['Institución Origen']\"] ? `'${$json[\"['Institución Origen']\"]}'` : 'NULL' }},\n  {{ $json[\"['Institución Destino']\"] ? `'${$json[\"['Institución Destino']\"]}'` : 'NULL' }},\n  {{ $json[\"['Sede Universidad']\"] ? `'${$json[\"['Sede Universidad']\"]}'` : 'NULL' }}\n);",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        4816,
+        512
+      ],
+      "id": "f0c15fb0-5949-4fb0-a43a-09dd67f7d867",
+      "name": "INSERCIÓN DIMENSION LUGAR",
+      "credentials": {
+        "postgres": {
+          "id": "ycnjkAko8nxYUOUj",
+          "name": "HRW-ORI"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO datawarehouse.\"D_PROGRAMA\" (NombrePrograma, Facultad, DependenciaAdministrativa)\nVALUES (\n  {{ $json[\"['Programa Academico']\"] ? `'${$json[\"['Programa Academico']\"]}'` : 'NULL' }},\n  {{ $json.Facultad ? `'${$json.Facultad}'` : 'NULL' }},\n  {{ $json[\"['Dependencia Administrativa']\"] ? `'${$json[\"['Dependencia Administrativa']\"]}'` : 'NULL' }}\n);",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        4816,
+        704
+      ],
+      "id": "86f32812-1525-45ab-9818-344b79574420",
+      "name": "INSERCIÓN DIMENSION PROGRAMA",
+      "credentials": {
+        "postgres": {
+          "id": "ycnjkAko8nxYUOUj",
+          "name": "HRW-ORI"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO datawarehouse.\"D_MOVILIZANTE\" (Edad, Genero, EstadoCivil, Rol, SemestreCursante)\nVALUES (\n  {{ $json.Edad  ? `'${$json.Edad}'` : 'NULL'}},\n  {{ $json.Genero ? `'${$json.Genero}'` : 'NULL' }},\n  {{ $json[\"['Estado civil']\"] ? `'${$json[\"['Estado civil']\"]}'` : 'NULL' }},\n  {{ $json.Rol ? `'${$json.Rol}'` : 'NULL' }},\n  {{ $json[\"['Semestre Cursante']\"] ? `'${$json[\"['Semestre Cursante']\"]}'` : 'NULL' }}\n );\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        4816,
+        880
+      ],
+      "id": "739da9cb-996e-4ac6-90f6-1e0c4d52bc24",
+      "name": "INSERCIÓN DIMENSION MOVILIZANTE",
+      "credentials": {
+        "postgres": {
+          "id": "ycnjkAko8nxYUOUj",
+          "name": "HRW-ORI"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "keys": {
+          "key": [
+            {
+              "currentKey": "Año",
+              "newKey": "Ano"
+            }
+          ]
+        },
+        "additionalOptions": {}
+      },
+      "type": "n8n-nodes-base.renameKeys",
+      "typeVersion": 1,
+      "position": [
+        4224,
+        1056
+      ],
+      "id": "79e86259-dbfe-4de4-b3e4-0d83820bc98f",
+      "name": "Renombrar Campo Año"
+    },
+    {
+      "parameters": {
+        "operation": "xlsx",
+        "binaryPropertyName": "file",
+        "options": {
+          "includeEmptyCells": false,
+          "rawData": false
+        }
+      },
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [
+        3136,
+        800
+      ],
+      "id": "a1b71943-9e33-42dc-8a00-4eb29d8dcb19",
+      "name": "Extraer datos en tabla procesable"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO datawarehouse.\"D_MOVILIDAD\" (Tipo, Modalidad, Direccion, DuracionDias)\nVALUES (\n  {{ $json[\"['Tipo Movilidad']\"] ? `'${$json[\"['Tipo Movilidad']\"]}'` : 'NULL' }},\n  {{ $json.Modalidad ? `'${$json.Modalidad}'` : 'NULL' }},\n  {{ $json[\"['Entrante/Saliente']\"] ? `'${$json[\"['Entrante/Saliente']\"]}'` : 'NULL' }},\n  {{ $json.DuracionDias ? `'${$json.DuracionDias}'` : 'NULL' }}\n\n);",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        4816,
+        1024
+      ],
+      "id": "99485e88-f15f-444a-b332-079328a6bed5",
+      "name": "INSERCIÓN DIMENSION MOVILIDAD",
+      "credentials": {
+        "postgres": {
+          "id": "ycnjkAko8nxYUOUj",
+          "name": "HRW-ORI"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO datawarehouse.\"D_TIEMPO\" (Año, Semestre, Mes, Dia)\nVALUES (\n  {{ $json[\"Ano\"] ? `${$json[\"Ano\"]}` : 'NULL' }},\n  {{ $json['Semestre'] ? `'${$json.Semestre}'` : 'NULL'   }},\n  {{ $json['Mes'] ? `'${$json.Mes}'` : 'NULL'   }},\n  {{ $json['Dia'] ? `'${$json.Dia}'` : 'NULL'   }}\n);",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        4800,
+        1216
+      ],
+      "id": "c6fd0728-ad51-4f7b-8a4a-7c4ca0f1bd00",
+      "name": "INSERCIÓN DIMENSION TIEMPO",
+      "credentials": {
+        "postgres": {
+          "id": "ycnjkAko8nxYUOUj",
+          "name": "HRW-ORI"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO parameters.\"stg_movilidades\" (\n  \"ano\", \"semestre\", \"mes\", \"dia\",\n  \"paisorigen\", \"paisdestino\",\n  \"institucionorigen\", \"instituciondestino\", \"sedeinstitucion\",\n  \"nombreprograma\", \"facultad\", \"dependenciaadministrativa\",\n  \"edad\", \"genero\", \"estadocivil\", \"rol\", \"semestrecursante\",\n  \"tipomovilidad\", \"modalidad\", \"direccion\", \"duraciondias\",\n  \"codigoconvenio\"\n)\nVALUES (\n  {{ $json[\"Ano\"] ? `'${$json[\"Ano\"]}'` : 'NULL' }},\n  {{ $json[\"Semestre\"] ? `'${$json[\"Semestre\"]}'` : 'NULL' }},\n  {{ $json[\"Mes\"] ? `'${$json[\"Mes\"]}'` : 'NULL' }},\n  {{ $json[\"Dia\"] ? `'${$json[\"Dia\"]}'` : 'NULL' }},\n  {{ $json['[\\'Pais Origen\\']'] ? `'${$json['[\\'Pais Origen\\']']}'` : 'NULL' }},\n  {{ $json['[\\'Pais Destino\\']'] ? `'${$json['[\\'Pais Destino\\']']}'` : 'NULL' }},\n  {{ $json['[\\'Institución Origen\\']'] ? `'${$json['[\\'Institución Origen\\']']}'` : 'NULL' }},\n  {{ $json['[\\'Institución Destino\\']'] ? `'${$json['[\\'Institución Destino\\']']}'` : 'NULL' }},\n  {{ $json['[\\'Sede Universidad\\']'] ? `'${$json['[\\'Sede Universidad\\']']}'` : 'NULL' }},\n\n  {{ $json['[\\'Programa Academico\\']'] ? `'${$json['[\\'Programa Academico\\']']}'` : 'NULL' }},\n  {{ $json[\"Facultad\"] ? `'${$json[\"Facultad\"]}'` : 'NULL' }},\n  {{ $json['[\\'Dependencia Administrativa\\']']  ? `'${$json['[\\'Dependencia Administrativa\\']'] }'` : 'NULL' }},\n  \n  {{ $json[\"Edad\"] ? `'${$json[\"Edad\"]}'` : 'NULL' }},\n  {{ $json[\"Genero\"] ? `'${$json[\"Genero\"]}'` : 'NULL' }},\n  {{ $json['[\\'Estado civil\\']'] ? `'${$json['[\\'Estado civil\\']']}'` : 'NULL' }},\n  {{ $json[\"Rol\"] ? `'${$json[\"Rol\"]}'` : 'NULL' }},\n  {{ $json['[\\'Semestre Cursante\\']'] ? `'${$json['[\\'Semestre Cursante\\']']}'` : 'NULL' }},\n\n  {{ $json['[\\'Tipo Movilidad\\']'] ? `'${$json['[\\'Tipo Movilidad\\']']}'` : 'NULL' }},\n  {{ $json[\"Modalidad\"] ? `'${$json[\"Modalidad\"]}'` : 'NULL' }},\n  {{ $json['[\\'Entrante/Saliente\\']'] ? `'${$json['[\\'Entrante/Saliente\\']']}'` : 'NULL' }},\n  {{ $json[\"DuracionDias\"] ? `'${$json[\"DuracionDias\"]}'` : 'NULL' }},\n\n  {{ $json['[\\'Codigo Convenio\\']'] ? `'${$json['[\\'Codigo Convenio\\']']}'` : 'NULL' }}\n);\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        4800,
+        1360
+      ],
+      "id": "baa2d6a5-15c8-446b-8dd6-cf469e004653",
+      "name": "INSERCIÓN TABLA PIVOTE",
+      "credentials": {
+        "postgres": {
+          "id": "ycnjkAko8nxYUOUj",
+          "name": "HRW-ORI"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "BEGIN;\n\nMERGE INTO datawarehouse.\"D_CONVENIOS\" AS d\nUSING (\n  SELECT codigo, tipo, vigencia, estado\n  FROM operations.\"v_d_convenios\"\n) AS s\nON (d.codigo = s.codigo)\nWHEN MATCHED THEN\n  UPDATE SET\n    tipo     = s.tipo,\n    vigencia = s.vigencia,\n    estado   = s.estado\nWHEN NOT MATCHED THEN\n  INSERT (codigo, tipo, vigencia, estado)\n  VALUES (s.codigo, s.tipo, s.vigencia, s.estado);\n\n-- (Opcional) Marcar como Inactivo los que ya no vienen en la fuente\nUPDATE datawarehouse.\"D_CONVENIOS\" d\nSET estado = 'Inactivo'\nWHERE NOT EXISTS (\n  SELECT 1 FROM operations.\"v_d_convenios\" s WHERE s.codigo = d.codigo\n) AND d.estado <> 'Inactivo';\n\nCOMMIT;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        4800,
+        1520
+      ],
+      "id": "9f8f4a37-9518-4c05-b379-d2591de9c938",
+      "name": "INSERCIÓN DIMENSION CONVENIO",
+      "credentials": {
+        "postgres": {
+          "id": "ycnjkAko8nxYUOUj",
+          "name": "HRW-ORI"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "CALL datawarehouse.poblar_hecho_movilidades2();\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        5232,
+        976
+      ],
+      "id": "fd51461b-69f2-4f0c-859c-c98ca8b7beda",
+      "name": "LLENADO DEL HECHO",
+      "credentials": {
+        "postgres": {
+          "id": "ycnjkAko8nxYUOUj",
+          "name": "HRW-ORI"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "FormateoFechas1": {
+      "main": [
+        [
+          {
+            "node": "SeparacionFecha",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CalcularDuracionEnDias1": {
+      "main": [
+        [
+          {
+            "node": "RoundDias1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "RoundDias1": {
+      "main": [
+        [
+          {
+            "node": "Segmentación Lugar",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Segmentación Programa",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Segmentación Movilizante",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Segmentación Movilidad",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Renombrar Campo Año",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SeparacionFecha": {
+      "main": [
+        [
+          {
+            "node": "CalcularDuracionEnDias1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "STG_MOVILIDADES": {
+      "main": [
+        [
+          {
+            "node": "INSERCIÓN TABLA PIVOTE",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "INSERCIÓN DIMENSION CONVENIO",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LimpiezaDatos": {
+      "main": [
+        [
+          {
+            "node": "FormateoFechas1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Segmentación Movilizante": {
+      "main": [
+        [
+          {
+            "node": "INSERCIÓN DIMENSION MOVILIZANTE",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Segmentación Programa": {
+      "main": [
+        [
+          {
+            "node": "INSERCIÓN DIMENSION PROGRAMA",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Segmentación Lugar": {
+      "main": [
+        [
+          {
+            "node": "INSERCIÓN DIMENSION LUGAR",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Segmentación Movilidad": {
+      "main": [
+        [
+          {
+            "node": "INSERCIÓN DIMENSION MOVILIDAD",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Segmentación tiempo": {
+      "main": [
+        [
+          {
+            "node": "INSERCIÓN DIMENSION TIEMPO",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook Ingesta-Excel": {
+      "main": [
+        [
+          {
+            "node": "Extraer datos en tabla procesable",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "INSERCIÓN DIMENSION LUGAR": {
+      "main": [
+        [
+          {
+            "node": "LLENADO DEL HECHO",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "INSERCIÓN DIMENSION PROGRAMA": {
+      "main": [
+        [
+          {
+            "node": "LLENADO DEL HECHO",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "INSERCIÓN DIMENSION MOVILIZANTE": {
+      "main": [
+        [
+          {
+            "node": "LLENADO DEL HECHO",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Renombrar Campo Año": {
+      "main": [
+        [
+          {
+            "node": "Segmentación tiempo",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "STG_MOVILIDADES",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extraer datos en tabla procesable": {
+      "main": [
+        [
+          {
+            "node": "LimpiezaDatos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "INSERCIÓN DIMENSION MOVILIDAD": {
+      "main": [
+        [
+          {
+            "node": "LLENADO DEL HECHO",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "INSERCIÓN DIMENSION TIEMPO": {
+      "main": [
+        [
+          {
+            "node": "LLENADO DEL HECHO",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "INSERCIÓN TABLA PIVOTE": {
+      "main": [
+        [
+          {
+            "node": "LLENADO DEL HECHO",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "INSERCIÓN DIMENSION CONVENIO": {
+      "main": [
+        [
+          {
+            "node": "LLENADO DEL HECHO",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "c5e40bb5-2ab6-45d1-afc7-cb7a450a7b86",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "2cd340a95997463a0c9a40a8fe9d370c30e28072c266d54ccea115c8886e9ec2"
+  },
+  "id": "cNQRhkwVyAgI1Pme",
+  "tags": []
+}
