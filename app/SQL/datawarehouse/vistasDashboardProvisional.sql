@@ -62,7 +62,7 @@ DROP MATERIALIZED VIEW IF EXISTS datawarehouse.mv_movilidades_por_convenio;
 
 CREATE MATERIALIZED VIEW datawarehouse.mv_movilidades_por_convenio AS
 SELECT 
-  c.tipo,
+  c.codigo,
   c.vigencia,
   c.estado,
   COUNT(*)::bigint AS total_movilidades
