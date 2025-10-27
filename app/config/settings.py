@@ -46,6 +46,7 @@ class Settings(BaseSettings):
     # Configuración n8n / upload
     # ------------------------
     N8N_WEBHOOK_URL: str
+    N8N_DOWNLOAD_WEBHOOK_URL: str              
     UPLOAD_DIR: str = "uploads"
     MAX_UPLOAD_MB: int = 25
 
@@ -53,6 +54,5 @@ class Settings(BaseSettings):
         env_file = ".env"
         env_file_encoding = "utf-8"
         extra = "ignore"
-
 
 settings = Settings()

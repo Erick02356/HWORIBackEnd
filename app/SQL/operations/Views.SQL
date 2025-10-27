@@ -1,23 +1,30 @@
 --VISTA PARA EL LLENADO DE LA DIMENSION DE CONVENIOS 
-CREATE OR REPLACE VIEW operations."v_d_convenios" AS
-SELECT DISTINCT 
-    tipo,
-    (fecha_inicializacion - fecha_inicio) AS Vigencia,
-    estado
-FROM operations."convenio";
 
-DELETE FROM datawarehouse."D_CONVENIOS";
+BEGIN;
 
-SELECT setval(
-    pg_get_serial_sequence('datawarehouse."D_CONVENIOS"', 'llaveconvenios'),
-    1,
-    false
-);
+MERGE INTO datawarehouse."D_CONVENIOS" AS d
+USING (
+  SELECT codigo, tipo, vigencia, estado
+  FROM operations."v_d_convenios"
+) AS s
+ON (d.codigo = s.codigo)
+WHEN MATCHED THEN
+  UPDATE SET
+    tipo     = s.tipo,
+    vigencia = s.vigencia,
+    estado   = s.estado
+WHEN NOT MATCHED THEN
+  INSERT (codigo, tipo, vigencia, estado)
+  VALUES (s.codigo, s.tipo, s.vigencia, s.estado);
 
-INSERT INTO datawarehouse."D_CONVENIOS"(tipo, vigencia, estado)
-SELECT tipo, vigencia, estado
-FROM operations."v_d_convenios";
+-- (Opcional) Marcar como Inactivo los que ya no vienen en la fuente
+UPDATE datawarehouse."D_CONVENIOS" d
+SET estado = 'Inactivo'
+WHERE NOT EXISTS (
+  SELECT 1 FROM operations."v_d_convenios" s WHERE s.codigo = d.codigo
+) AND d.estado <> 'Inactivo';
 
+COMMIT;
 --VISTAS PARA EL LLENADO DEL HECHO PL/SQL
 
 CREATE OR REPLACE VIEW operations.vw_convenios_reducida AS

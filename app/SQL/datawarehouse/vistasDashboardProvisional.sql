@@ -156,7 +156,7 @@ FROM datawarehouse."H_MovilidadesRealizadas" h
 JOIN datawarehouse."D_MOVILIDAD" mo ON h.llavemovilidad = mo.llavemovilidad
 GROUP BY mo.modalidad;
 
-CREATE UNIQUE_INDEX IF NOT EXISTS ix_mv_movilidades_por_modalidad
+CREATE UNIQUE INDEX IF NOT EXISTS ix_mv_movilidades_por_modalidad
   ON datawarehouse.mv_movilidades_por_modalidad (modalidad);
 
 
