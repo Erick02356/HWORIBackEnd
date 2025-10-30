@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String
+from sqlalchemy import Column, String
 from app.config.database import Base
 
 class Institucion(Base):

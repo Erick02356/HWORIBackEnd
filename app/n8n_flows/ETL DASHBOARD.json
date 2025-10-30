@@ -433,6 +433,27 @@
           "name": "HRW-ORI"
         }
       }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "DO $$\nDECLARE r record;\nBEGIN\n  FOR r IN\n    SELECT schemaname, matviewname\n    FROM pg_matviews\n    WHERE schemaname = 'datawarehouse'\n      AND matviewname LIKE 'mv_movilidades_%'\n    ORDER BY matviewname\n  LOOP\n    EXECUTE format('REFRESH MATERIALIZED VIEW %I.%I', r.schemaname, r.matviewname);\n  END LOOP;\nEND$$;\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        5408,
+        976
+      ],
+      "id": "912391cf-3ab8-4d50-9f3e-91bf40351339",
+      "name": "Execute a SQL query",
+      "credentials": {
+        "postgres": {
+          "id": "ycnjkAko8nxYUOUj",
+          "name": "HRW-ORI"
+        }
+      }
     }
   ],
   "pinData": {},
@@ -697,13 +718,24 @@
           }
         ]
       ]
+    },
+    "LLENADO DEL HECHO": {
+      "main": [
+        [
+          {
+            "node": "Execute a SQL query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "active": false,
   "settings": {
     "executionOrder": "v1"
   },
-  "versionId": "c5e40bb5-2ab6-45d1-afc7-cb7a450a7b86",
+  "versionId": "051e15cb-5c85-4d7d-9e09-aa9e18ed8ba6",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "2cd340a95997463a0c9a40a8fe9d370c30e28072c266d54ccea115c8886e9ec2"
